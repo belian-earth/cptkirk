@@ -8,3 +8,4 @@
 ^src/Makevars\.win$
 ^README\.Rmd$
 ^bench$
+^\.claude$
