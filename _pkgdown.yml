@@ -22,16 +22,15 @@ navbar:
       href: https://github.com/belian-earth/cptkirk
 reference:
 - title: Warping
-  desc: >
-    Stream, mosaic and reproject/resample remote (Cloud-Optimised) GeoTIFFs
-    onto a target grid, following the gdalwarp argument interface.
+  desc: |
+    Stream, mosaic and reproject/resample remote (Cloud-Optimised) GeoTIFFs onto a target grid, following the gdalwarp argument interface.
   contents:
   - ck_warp
   - warp_remote
 - title: Inspection
-  desc: >
-    Read a source's structure and georeferencing, or open it once and reuse
-    the handle across calls.
+  desc: |
+    Read a source's structure and georeferencing, or open it once and reuse the handle across calls.
   contents:
   - cog_info
   - cog_source
+
