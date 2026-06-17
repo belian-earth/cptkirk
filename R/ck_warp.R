@@ -27,7 +27,11 @@
 #' @param te_srs SRS of `te` (defaults to `t_srs`).
 #' @param tr Target resolution `c(xres, yres)` in target CRS units.
 #' @param ts Target size `c(width, height)` in pixels.
-#' @param r Resampling method (`"near"`, `"bilinear"`, `"cubic"`, ...).
+#' @param r Resampling method, one of `"near"` (default), `"bilinear"`,
+#'   `"cubic"`, `"cubicspline"`, `"lanczos"`, `"average"`, `"rms"`, `"mode"`,
+#'   `"max"`, `"min"`, `"med"`, `"q1"`, `"q3"`, `"sum"`. Matched with
+#'   [rlang::arg_match()], so a typo reports the valid set. (A method added by a
+#'   newer GDAL than this list knows can still be passed via `cl_arg`.)
 #' @param bands 1-based source bands to read (default: all). Subsetting happens
 #'   during the fetch, so only those bands' bytes are streamed.
 #' @param cl_arg Character vector of extra raw `gdalwarp` flags, forwarded
@@ -76,7 +80,10 @@
 #' @export
 ck_warp <- function(src, dst,
                     t_srs = NULL, te = NULL, te_srs = NULL,
-                    tr = NULL, ts = NULL, r = "near",
+                    tr = NULL, ts = NULL,
+                    r = c("near", "bilinear", "cubic", "cubicspline", "lanczos",
+                          "average", "rms", "mode", "max", "min", "med",
+                          "q1", "q3", "sum"),
                     bands = NULL, cl_arg = character(0),
                     num_threads = "ALL_CPUS", warp_memory = "auto",
                     cache_max = "auto", co = NULL, config = NULL,
@@ -85,15 +92,28 @@ ck_warp <- function(src, dst,
                     io_concurrency = 16L, max_bytes = NULL, sanitise = TRUE) {
   rlang::check_required(src)
   rlang::check_required(dst)
+  .check_src(src)
   if (!rlang::is_string(dst)) {
     cli::cli_abort("{.arg dst} must be a single output path string.")
   }
-  if (!is.null(te)) {
-    te <- as.numeric(te)
-    if (!rlang::is_double(te, n = 4L)) {
-      cli::cli_abort("{.arg te} must be {.code c(xmin, ymin, xmax, ymax)}.")
-    }
-  }
+  rlang::check_string(t_srs, allow_null = TRUE)
+  rlang::check_string(te_srs, allow_null = TRUE)
+  .check_num_vec(te, 4L, "c(xmin, ymin, xmax, ymax)")
+  .check_num_vec(tr, 2L, "c(xres, yres)", positive = TRUE)
+  .check_num_vec(ts, 2L, "c(width, height)", positive = TRUE)
+  r <- rlang::arg_match(r)
+  .check_bands(bands)
+  cl_arg <- cl_arg %||% character(0)
+  .check_chr(cl_arg)
+  .check_threads(num_threads)
+  .check_speed(warp_memory)
+  .check_speed(cache_max)
+  .check_chr(co, allow_null = TRUE)
+  .check_config(config)
+  rlang::check_bool(skip_nosource)
+  .check_fetch_args(overview, margin, io_concurrency, max_bytes, sanitise)
+
+  if (!is.null(te)) te <- as.numeric(te)
   io <- io_concurrency %||% 16L
   max_bytes <- max_bytes %||% .default_max_bytes()
 

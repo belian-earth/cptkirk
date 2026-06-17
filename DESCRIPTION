@@ -21,7 +21,7 @@ Imports:
     cli,
     gdalraster,
     methods,
-    rlang,
+    rlang (>= 1.1.0),
     stats,
     withr
 Suggests:

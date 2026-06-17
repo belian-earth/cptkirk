@@ -12,7 +12,8 @@ ck_warp(
   te_srs = NULL,
   tr = NULL,
   ts = NULL,
-  r = "near",
+  r = c("near", "bilinear", "cubic", "cubicspline", "lanczos", "average", "rms", "mode",
+    "max", "min", "med", "q1", "q3", "sum"),
   bands = NULL,
   cl_arg = character(0),
   num_threads = "ALL_CPUS",
@@ -52,7 +53,11 @@ otherwise in \code{t_srs}. When supplied this is the AOI that drives the fetch.}
 
 \item{ts}{Target size \code{c(width, height)} in pixels.}
 
-\item{r}{Resampling method (\code{"near"}, \code{"bilinear"}, \code{"cubic"}, ...).}
+\item{r}{Resampling method, one of \code{"near"} (default), \code{"bilinear"},
+\code{"cubic"}, \code{"cubicspline"}, \code{"lanczos"}, \code{"average"}, \code{"rms"}, \code{"mode"},
+\code{"max"}, \code{"min"}, \code{"med"}, \code{"q1"}, \code{"q3"}, \code{"sum"}. Matched with
+\code{\link[rlang:arg_match]{rlang::arg_match()}}, so a typo reports the valid set. (A method added by a
+newer GDAL than this list knows can still be passed via \code{cl_arg}.)}
 
 \item{bands}{1-based source bands to read (default: all). Subsetting happens
 during the fetch, so only those bands' bytes are streamed.}

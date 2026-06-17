@@ -51,10 +51,15 @@ warp_remote <- function(src, dst, t_srs = "", cl_arg = NULL, quiet = TRUE,
                         sanitise = TRUE) {
   rlang::check_required(src)
   rlang::check_required(dst)
+  .check_src(src)
   if (!rlang::is_string(dst)) {
     cli::cli_abort("{.arg dst} must be a single output path string.")
   }
+  rlang::check_string(t_srs, allow_null = TRUE)
   cl_arg <- cl_arg %||% character(0)
+  .check_chr(cl_arg)
+  rlang::check_bool(quiet)
+  .check_fetch_args(overview, margin, io_concurrency, max_bytes, sanitise)
   # gdalraster::warp takes t_srs positionally; "" / NULL means "no override".
   t_srs <- if (is.null(t_srs) || !nzchar(t_srs)) NULL else t_srs
 
