@@ -1,0 +1,27 @@
+Package: cptkirk
+Title: Warp-Speed Remote GDAL Warping of Cloud-Optimised GeoTIFFs
+Version: 0.1.0
+Authors@R:
+    person("Hugh", "Graham", , "hugh@belian.earth", role = c("aut", "cre"))
+Description: A remote, overview-aware gdalwarp. cptkirk works out which source
+    pixels a requested warp will touch, streams only those tiles over the
+    Rust 'async-tiff' reader (with high remote-read saturation, at the
+    appropriate overview level), stages them as an in-memory GDAL source, then
+    hands the actual reprojection and resampling to GDAL via 'gdalraster',
+    following the gdalwarp argument interface.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 8.0.0
+Config/rextendr/version: 0.5.0
+SystemRequirements: Cargo (Rust's package manager), rustc >= 1.78
+Depends:
+    R (>= 4.2)
+Imports:
+    cli,
+    gdalraster,
+    rlang,
+    withr
+Suggests: 
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
