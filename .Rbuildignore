@@ -12,3 +12,4 @@
 ^scratch\.R$
 ^LICENSE\.md$
 ^\.github$
+^codecov\.yml$
