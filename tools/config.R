@@ -70,6 +70,28 @@ cfg <- if (is_debug) "debug" else "release"
   ""
 )
 
+# Align the deployment target of bundled C in the Rust build (e.g. zstd's) with
+# the macOS version R links against, so `ld` does not warn that objects were
+# built for a newer macOS -- a warning `R CMD check --as-cran` flags as
+# significant. R targets the major macOS version (`.0`); the installed SDK is
+# usually a later patch release, which is the source of the mismatch. Empty off
+# macOS.
+.macos_deployment <- ""
+if (Sys.info()[["sysname"]] == "Darwin") {
+  dt <- Sys.getenv("MACOSX_DEPLOYMENT_TARGET")
+  if (!nzchar(dt)) {
+    ver <- tryCatch(
+      system2("sw_vers", "-productVersion", stdout = TRUE),
+      error = function(e) character()
+    )
+    major <- sub("[.].*$", "", ver[1])
+    if (length(major) == 1L && nzchar(major)) dt <- paste0(major, ".0")
+  }
+  if (nzchar(dt)) {
+    .macos_deployment <- paste0("MACOSX_DEPLOYMENT_TARGET=", dt, " ")
+  }
+}
+
 # read in the Makevars.in file checking
 is_windows <- .Platform[["OS.type"]] == "windows"
 
@@ -102,7 +124,8 @@ new_txt <- gsub("@CRAN_FLAGS@", .cran_flags, mv_txt) |>
   gsub("@CLEAN_TARGET@", .clean_targets, x = _) |>
   gsub("@LIBDIR@", .libdir, x = _) |>
   gsub("@TARGET@", .target, x = _) |>
-  gsub("@PANIC_EXPORTS@", .panic_exports, x = _)
+  gsub("@PANIC_EXPORTS@", .panic_exports, x = _) |>
+  gsub("@MACOS_DEPLOYMENT@", .macos_deployment, x = _)
 
 message("Writing `", mv_ofp, "`.")
 con <- file(mv_ofp, open = "wb")
