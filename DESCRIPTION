@@ -10,6 +10,8 @@ Description: A remote, overview-aware gdalwarp. cptkirk works out which source
     hands the actual reprojection and resampling to GDAL via 'gdalraster',
     following the gdalwarp argument interface.
 License: MIT + file LICENSE
+URL: https://github.com/belian-earth/cptkirk, https://belian-earth.github.io/cptkirk/
+BugReports: https://github.com/belian-earth/cptkirk/issues
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 8.0.0
