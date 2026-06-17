@@ -9,12 +9,12 @@ warp_remote(
   dst,
   t_srs = "",
   cl_arg = NULL,
+  quiet = TRUE,
   overview = NULL,
   margin = 8L,
   io_concurrency = 16L,
   max_bytes = NULL,
-  sanitise = TRUE,
-  quiet = TRUE
+  sanitise = TRUE
 )
 }
 \arguments{
@@ -32,6 +32,11 @@ write). The format is inferred by GDAL or set with \code{-of} in \code{cl_arg}.}
 \code{\link[gdalraster:warp]{gdalraster::warp()}} (e.g. \code{c("-te", "0", "0", "100", "100", "-tr", "10", "10", "-r", "bilinear")}). cptkirk parses \code{-te}/\code{-te_srs}/\code{-tr}/\code{-ts} from
 it purely to size the fetch.}
 
+\item{quiet}{If \code{TRUE} (default), the GDAL warp runs without a progress
+callback. Unlike \code{\link[gdalraster:warp]{gdalraster::warp()}} this defaults to \code{TRUE}: a progress
+callback invoked from GDAL's worker threads (e.g. with \code{-multi}) can crash
+the R session.}
+
 \item{overview}{Force a 1-based IFD/overview level instead of auto-selecting
 from the output resolution. \code{1} = full resolution.}
 
@@ -48,11 +53,6 @@ single global fetch pool shared across all source tiles (default 16).}
 a tiny metadata-derived stand-in \emph{before} fetching, so a bad CRS,
 resampling method, creation option or unknown flag fails in milliseconds
 instead of after a remote read. Set \code{FALSE} to skip the check.}
-
-\item{quiet}{If \code{TRUE} (default), the GDAL warp runs without a progress
-callback. Unlike \code{\link[gdalraster:warp]{gdalraster::warp()}} this defaults to \code{TRUE}: a progress
-callback invoked from GDAL's worker threads (e.g. with \code{-multi}) can crash
-the R session.}
 }
 \value{
 The \code{dst} path, invisibly.

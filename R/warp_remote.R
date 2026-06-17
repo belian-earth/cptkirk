@@ -25,6 +25,10 @@
 #'   [gdalraster::warp()] (e.g. `c("-te", "0", "0", "100", "100", "-tr", "10",
 #'   "10", "-r", "bilinear")`). cptkirk parses `-te`/`-te_srs`/`-tr`/`-ts` from
 #'   it purely to size the fetch.
+#' @param quiet If `TRUE` (default), the GDAL warp runs without a progress
+#'   callback. Unlike [gdalraster::warp()] this defaults to `TRUE`: a progress
+#'   callback invoked from GDAL's worker threads (e.g. with `-multi`) can crash
+#'   the R session.
 #' @param overview Force a 1-based IFD/overview level instead of auto-selecting
 #'   from the output resolution. `1` = full resolution.
 #' @param margin Source-pixel margin added around the computed window to cover
@@ -37,18 +41,14 @@
 #'   a tiny metadata-derived stand-in *before* fetching, so a bad CRS,
 #'   resampling method, creation option or unknown flag fails in milliseconds
 #'   instead of after a remote read. Set `FALSE` to skip the check.
-#' @param quiet If `TRUE` (default), the GDAL warp runs without a progress
-#'   callback. Unlike [gdalraster::warp()] this defaults to `TRUE`: a progress
-#'   callback invoked from GDAL's worker threads (e.g. with `-multi`) can crash
-#'   the R session.
 #' @return The `dst` path, invisibly.
 #' @seealso [ck_warp()] for the recommended helper with named arguments and
 #'   cptkirk's defaults.
 #' @export
-warp_remote <- function(src, dst, t_srs = "", cl_arg = NULL,
+warp_remote <- function(src, dst, t_srs = "", cl_arg = NULL, quiet = TRUE,
                         overview = NULL, margin = 8L,
                         io_concurrency = 16L, max_bytes = NULL,
-                        sanitise = TRUE, quiet = TRUE) {
+                        sanitise = TRUE) {
   rlang::check_required(src)
   rlang::check_required(dst)
   if (!rlang::is_string(dst)) {

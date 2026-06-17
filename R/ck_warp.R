@@ -33,24 +33,6 @@
 #' @param cl_arg Character vector of extra raw `gdalwarp` flags, forwarded
 #'   verbatim to [gdalraster::warp()] (e.g. `c("-et", "0")`). These are merged
 #'   with the flags cptkirk builds from the named arguments above.
-#' @param overview Force a 1-based IFD/overview level instead of auto-selecting
-#'   from the output resolution. `1` = full resolution.
-#' @param margin Source-pixel margin added around the computed window to cover
-#'   the resampling kernel and reprojection slop (default 8).
-#' @param io_concurrency Number of concurrent tile reads -- the width of the
-#'   single global fetch pool shared across all source tiles. Default 16, which
-#'   suits object stores that throttle around that many simultaneous range
-#'   requests (e.g. S3 / source.coop). Raise (24-32) on a fast, stable link;
-#'   lower if a store rate-limits.
-#' @param max_bytes Safety ceiling (bytes) on the staged in-memory window
-#'   (`width * height * bands * <native dtype bytes>`). `NULL` (default) uses
-#'   ~1/3 of system RAM. It only guards against the foot-gun of warping a whole
-#'   large multi-band raster at native resolution; narrow the request, coarsen
-#'   `tr`/`ts`, or raise this to allow it.
-#' @param sanitise If `TRUE` (default), validate the warp arguments against a
-#'   tiny metadata-derived stand-in *before* fetching, so a bad CRS, resampling
-#'   method, creation option or unknown flag fails in milliseconds instead of
-#'   after a remote read. Set `FALSE` to skip the check.
 #' @param num_threads Value for GDAL's warp `NUM_THREADS` warp option and the
 #'   `GDAL_NUM_THREADS` config (default `"ALL_CPUS"`), parallelising the
 #'   resampling computation and GeoTIFF (de)compression. `NULL` sets neither,
@@ -71,6 +53,24 @@
 #'   `INIT_DEST` so the warper skips output chunks with no source coverage
 #'   (e.g. nodata margins from reprojection). No effect when output is fully
 #'   covered. Ignored on the copy fast-path.
+#' @param overview Force a 1-based IFD/overview level instead of auto-selecting
+#'   from the output resolution. `1` = full resolution.
+#' @param margin Source-pixel margin added around the computed window to cover
+#'   the resampling kernel and reprojection slop (default 8).
+#' @param io_concurrency Number of concurrent tile reads -- the width of the
+#'   single global fetch pool shared across all source tiles. Default 16, which
+#'   suits object stores that throttle around that many simultaneous range
+#'   requests (e.g. S3 / source.coop). Raise (24-32) on a fast, stable link;
+#'   lower if a store rate-limits.
+#' @param max_bytes Safety ceiling (bytes) on the staged in-memory window
+#'   (`width * height * bands * <native dtype bytes>`). `NULL` (default) uses
+#'   ~1/3 of system RAM. It only guards against the foot-gun of warping a whole
+#'   large multi-band raster at native resolution; narrow the request, coarsen
+#'   `tr`/`ts`, or raise this to allow it.
+#' @param sanitise If `TRUE` (default), validate the warp arguments against a
+#'   tiny metadata-derived stand-in *before* fetching, so a bad CRS, resampling
+#'   method, creation option or unknown flag fails in milliseconds instead of
+#'   after a remote read. Set `FALSE` to skip the check.
 #' @return The `dst` path, invisibly.
 #' @seealso [warp_remote()] for the thin [gdalraster::warp()] sibling.
 #' @export
@@ -78,11 +78,11 @@ ck_warp <- function(src, dst,
                     t_srs = NULL, te = NULL, te_srs = NULL,
                     tr = NULL, ts = NULL, r = "near",
                     bands = NULL, cl_arg = character(0),
-                    overview = NULL, margin = 8L,
-                    io_concurrency = 16L, max_bytes = NULL, sanitise = TRUE,
                     num_threads = "ALL_CPUS", warp_memory = "auto",
                     cache_max = "auto", co = NULL, config = NULL,
-                    skip_nosource = TRUE) {
+                    skip_nosource = TRUE,
+                    overview = NULL, margin = 8L,
+                    io_concurrency = 16L, max_bytes = NULL, sanitise = TRUE) {
   rlang::check_required(src)
   rlang::check_required(dst)
   if (!rlang::is_string(dst)) {

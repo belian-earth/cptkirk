@@ -15,17 +15,17 @@ ck_warp(
   r = "near",
   bands = NULL,
   cl_arg = character(0),
-  overview = NULL,
-  margin = 8L,
-  io_concurrency = 16L,
-  max_bytes = NULL,
-  sanitise = TRUE,
   num_threads = "ALL_CPUS",
   warp_memory = "auto",
   cache_max = "auto",
   co = NULL,
   config = NULL,
-  skip_nosource = TRUE
+  skip_nosource = TRUE,
+  overview = NULL,
+  margin = 8L,
+  io_concurrency = 16L,
+  max_bytes = NULL,
+  sanitise = TRUE
 )
 }
 \arguments{
@@ -61,29 +61,6 @@ during the fetch, so only those bands' bytes are streamed.}
 verbatim to \code{\link[gdalraster:warp]{gdalraster::warp()}} (e.g. \code{c("-et", "0")}). These are merged
 with the flags cptkirk builds from the named arguments above.}
 
-\item{overview}{Force a 1-based IFD/overview level instead of auto-selecting
-from the output resolution. \code{1} = full resolution.}
-
-\item{margin}{Source-pixel margin added around the computed window to cover
-the resampling kernel and reprojection slop (default 8).}
-
-\item{io_concurrency}{Number of concurrent tile reads -- the width of the
-single global fetch pool shared across all source tiles. Default 16, which
-suits object stores that throttle around that many simultaneous range
-requests (e.g. S3 / source.coop). Raise (24-32) on a fast, stable link;
-lower if a store rate-limits.}
-
-\item{max_bytes}{Safety ceiling (bytes) on the staged in-memory window
-(\verb{width * height * bands * <native dtype bytes>}). \code{NULL} (default) uses
-~1/3 of system RAM. It only guards against the foot-gun of warping a whole
-large multi-band raster at native resolution; narrow the request, coarsen
-\code{tr}/\code{ts}, or raise this to allow it.}
-
-\item{sanitise}{If \code{TRUE} (default), validate the warp arguments against a
-tiny metadata-derived stand-in \emph{before} fetching, so a bad CRS, resampling
-method, creation option or unknown flag fails in milliseconds instead of
-after a remote read. Set \code{FALSE} to skip the check.}
-
 \item{num_threads}{Value for GDAL's warp \code{NUM_THREADS} warp option and the
 \code{GDAL_NUM_THREADS} config (default \code{"ALL_CPUS"}), parallelising the
 resampling computation and GeoTIFF (de)compression. \code{NULL} sets neither,
@@ -109,6 +86,29 @@ set for the duration of the call (restored on exit).}
 \code{INIT_DEST} so the warper skips output chunks with no source coverage
 (e.g. nodata margins from reprojection). No effect when output is fully
 covered. Ignored on the copy fast-path.}
+
+\item{overview}{Force a 1-based IFD/overview level instead of auto-selecting
+from the output resolution. \code{1} = full resolution.}
+
+\item{margin}{Source-pixel margin added around the computed window to cover
+the resampling kernel and reprojection slop (default 8).}
+
+\item{io_concurrency}{Number of concurrent tile reads -- the width of the
+single global fetch pool shared across all source tiles. Default 16, which
+suits object stores that throttle around that many simultaneous range
+requests (e.g. S3 / source.coop). Raise (24-32) on a fast, stable link;
+lower if a store rate-limits.}
+
+\item{max_bytes}{Safety ceiling (bytes) on the staged in-memory window
+(\verb{width * height * bands * <native dtype bytes>}). \code{NULL} (default) uses
+~1/3 of system RAM. It only guards against the foot-gun of warping a whole
+large multi-band raster at native resolution; narrow the request, coarsen
+\code{tr}/\code{ts}, or raise this to allow it.}
+
+\item{sanitise}{If \code{TRUE} (default), validate the warp arguments against a
+tiny metadata-derived stand-in \emph{before} fetching, so a bad CRS, resampling
+method, creation option or unknown flag fails in milliseconds instead of
+after a remote read. Set \code{FALSE} to skip the check.}
 }
 \value{
 The \code{dst} path, invisibly.
