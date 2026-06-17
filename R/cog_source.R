@@ -8,6 +8,16 @@
 #'
 #' @param src Path or URL to a GeoTIFF / Cloud-Optimised GeoTIFF.
 #' @return An object of class `cog_source` wrapping an open handle.
+#' @section Authentication:
+#' Remote object-store sources (`s3://`, `gs://`, `az://`) authenticate from the
+#' **process environment**, using the variable names `object_store` documents
+#' (e.g. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
+#' `AWS_REGION`; `GOOGLE_SERVICE_ACCOUNT`; `AZURE_STORAGE_ACCOUNT_NAME`). With no
+#' static credentials the builders fall back to the platform chain (web-identity,
+#' ECS, EC2 instance metadata). For public buckets set `AWS_SKIP_SIGNATURE=true`
+#' (or just use the `https://` URL). Credentials are never passed through R, so
+#' they stay out of scripts and logs. This is independent of GDAL's `/vsi*`
+#' credential settings, which cptkirk does not use for reading.
 #' @export
 cog_source <- function(src) {
   rlang::check_required(src)

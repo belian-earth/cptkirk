@@ -19,3 +19,16 @@ The returned handle can be passed to \code{\link[=cog_info]{cog_info()}} and \co
 place of a URL, so repeated warps of the same raster (e.g. many AOIs, or a
 set of rasters) pay the metadata round-trips only once.
 }
+\section{Authentication}{
+
+Remote object-store sources (\verb{s3://}, \verb{gs://}, \verb{az://}) authenticate from the
+\strong{process environment}, using the variable names \code{object_store} documents
+(e.g. \code{AWS_ACCESS_KEY_ID}, \code{AWS_SECRET_ACCESS_KEY}, \code{AWS_SESSION_TOKEN},
+\code{AWS_REGION}; \code{GOOGLE_SERVICE_ACCOUNT}; \code{AZURE_STORAGE_ACCOUNT_NAME}). With no
+static credentials the builders fall back to the platform chain (web-identity,
+ECS, EC2 instance metadata). For public buckets set \code{AWS_SKIP_SIGNATURE=true}
+(or just use the \verb{https://} URL). Credentials are never passed through R, so
+they stay out of scripts and logs. This is independent of GDAL's \verb{/vsi*}
+credential settings, which cptkirk does not use for reading.
+}
+
