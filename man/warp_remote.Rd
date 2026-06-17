@@ -17,8 +17,8 @@ warp_remote(
   cl_arg = character(0),
   overview = NULL,
   margin = 8L,
-  io_concurrency = NULL,
-  max_bytes = 2e+09,
+  io_concurrency = 16L,
+  max_bytes = NULL,
   num_threads = "ALL_CPUS",
   warp_memory = NULL,
   cache_max = NULL,
@@ -65,13 +65,17 @@ from the output resolution. \code{1} = full resolution.}
 \item{margin}{Source-pixel margin added around the computed window to cover
 the resampling kernel and reprojection slop (default 8).}
 
-\item{io_concurrency}{Max in-flight tile fetches (default: a small
-CPU-derived value). Bump for cloud reads.}
+\item{io_concurrency}{Number of concurrent tile reads -- the width of the
+single global fetch pool shared across all source tiles. Default 16, which
+suits object stores that throttle around that many simultaneous range
+requests (e.g. S3 / source.coop). Raise (24-32) on a fast, stable link;
+lower if a store rate-limits.}
 
-\item{max_bytes}{Safety limit (bytes) on the in-memory window staged before
-warping (\verb{width * height * bands * <dtype bytes>}). Default 2e9 (2 GB).
-Warping a whole large multi-band raster at native resolution will exceed
-this on purpose; narrow the request or raise the limit.}
+\item{max_bytes}{Safety ceiling (bytes) on the staged in-memory window
+(\verb{width * height * bands * <native dtype bytes>}). \code{NULL} (default) uses
+~1/3 of system RAM. It only guards against the foot-gun of warping a whole
+large multi-band raster at native resolution; narrow the request, coarsen
+\code{tr}/\code{ts}, or raise this to allow it.}
 
 \item{num_threads}{Value for GDAL's warp \code{NUM_THREADS} warp option and the
 \code{GDAL_NUM_THREADS} config (default \code{"ALL_CPUS"}), parallelising the

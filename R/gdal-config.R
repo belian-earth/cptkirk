@@ -51,3 +51,10 @@
 .default_cache_bytes <- function() {
   max(256e6, min(2e9, .sys_ram_bytes() * 0.25))
 }
+
+# Default ceiling (bytes) on the staged in-memory window: ~1/3 of system RAM.
+# The window is native dtype; transient peak is ~2x this during the staging
+# copy. Floored at 1 GB so the guard still fires on tiny machines.
+.default_max_bytes <- function() {
+  max(1e9, .sys_ram_bytes() / 3)
+}
