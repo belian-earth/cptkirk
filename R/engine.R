@@ -41,7 +41,7 @@
   drop <- integer(0); i <- 1L
   while (i <= length(cl)) {
     if (cl[i] %in% flags) {
-      n <- .CL_ARITY[[cl[i]]]; if (is.null(n) || is.na(n)) n <- 0L
+      n <- unname(.CL_ARITY[cl[i]]); if (is.na(n)) n <- 0L   # 0-arity (e.g. -tap)
       drop <- c(drop, i:(i + n)); i <- i + n + 1L
     } else {
       i <- i + 1L
@@ -259,8 +259,9 @@
 
   # Geometry flags removed so the probe output stays tiny; the unique /vsimem
   # destination needs no -overwrite (and adding one could duplicate the
-  # caller's own).
-  probe_args <- .cl_strip(cl_arg, c("-te", "-te_srs", "-tr", "-ts"))
+  # caller's own). -tap goes with them: it is meaningless (and an error) once
+  # -tr is gone, but the real warp keeps both.
+  probe_args <- .cl_strip(cl_arg, c("-te", "-te_srs", "-tr", "-ts", "-tap"))
   tryCatch(
     gdalraster::warp(psrc, pdst, t_srs = t_srs %||% m$crs,
                      cl_arg = probe_args, quiet = TRUE),

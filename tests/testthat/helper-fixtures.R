@@ -78,15 +78,14 @@ raster_dim <- function(path) {
 }
 
 # gdalraster::warp reference matching cptkirk's defaults, exact transformer.
-gdal_ref_warp <- function(src, dst, t_srs, te, tr, r = "near") {
-  gdalraster::warp(
-    src, dst, t_srs = t_srs,
-    cl_arg = c("-te", formatC(te, format = "f", digits = 6),
-               "-tr", formatC(tr, format = "f", digits = 6),
-               "-r", r, "-et", "0",
-               "-wo", "INIT_DEST=NO_DATA", "-wo", "SKIP_NOSOURCE=YES",
-               "-overwrite"),
-    quiet = TRUE
-  )
+# `tap` mirrors ck_warp's default (align to the tr grid); set FALSE for the
+# faithful warp_remote path, which does not auto-tap.
+gdal_ref_warp <- function(src, dst, t_srs, te, tr, r = "near", tap = TRUE) {
+  cl <- c("-te", formatC(te, format = "f", digits = 6),
+          "-tr", formatC(tr, format = "f", digits = 6),
+          "-r", r, "-et", "0")
+  if (isTRUE(tap)) cl <- c(cl, "-tap")
+  cl <- c(cl, "-wo", "INIT_DEST=NO_DATA", "-wo", "SKIP_NOSOURCE=YES", "-overwrite")
+  gdalraster::warp(src, dst, t_srs = t_srs, cl_arg = cl, quiet = TRUE)
   dst
 }

@@ -101,6 +101,78 @@ test_that("multi-source mosaic matches gdalraster::warp of the same tiles", {
   for (b in 1:3) expect_equal(read_band(d1, b), read_band(d2, b))
 })
 
+test_that("ck_warp aligns to the tr grid by default (-tap); tap=FALSE opts out", {
+  dir <- withr::local_tempdir()
+  f <- fx_north(dir)
+  m <- cog_info(f); gt <- m$geotransform
+  sx <- gt[1] + c(40, 150) * gt[2]
+  sy <- gt[4] + c(40, 130) * gt[6]
+  te <- gdalraster::transform_bounds(c(min(sx), min(sy), max(sx), max(sy)),
+                                     m$crs, "EPSG:3857")   # not tr-aligned
+  tr <- c(15, 15)
+
+  # default: tap on -> bit-identical to gdalraster::warp WITH -tap (and cptkirk
+  # must fetch enough source to cover the outward-snapped grid).
+  d1 <- file.path(dir, "tap.tif")
+  ck_warp(f, d1, t_srs = "EPSG:3857", te = te, tr = tr, r = "near",
+          cl_arg = c("-et", "0"))
+  ref_tap <- gdal_ref_warp(f, file.path(dir, "ref_tap.tif"), "EPSG:3857", te, tr,
+                           r = "near", tap = TRUE)
+  expect_equal(raster_dim(d1), raster_dim(ref_tap))
+  for (b in 1:3) expect_equal(read_band(d1, b), read_band(ref_tap, b))
+
+  # tap = FALSE: raw grid -> bit-identical to gdalraster::warp WITHOUT -tap.
+  d2 <- file.path(dir, "raw.tif")
+  ck_warp(f, d2, t_srs = "EPSG:3857", te = te, tr = tr, r = "near", tap = FALSE,
+          cl_arg = c("-et", "0"))
+  ref_raw <- gdal_ref_warp(f, file.path(dir, "ref_raw.tif"), "EPSG:3857", te, tr,
+                           r = "near", tap = FALSE)
+  expect_equal(raster_dim(d2), raster_dim(ref_raw))
+  for (b in 1:3) expect_equal(read_band(d2, b), read_band(ref_raw, b))
+
+  # tap actually changed the grid (te was not tr-aligned).
+  expect_false(isTRUE(all.equal(cog_info(d1)$geotransform,
+                                cog_info(d2)$geotransform)))
+})
+
+test_that("-ts (output size) matches gdalraster::warp", {
+  dir <- withr::local_tempdir()
+  f <- fx_north(dir)
+  m <- cog_info(f); gt <- m$geotransform
+  sx <- gt[1] + c(40, 150) * gt[2]
+  sy <- gt[4] + c(40, 130) * gt[6]
+  te <- gdalraster::transform_bounds(c(min(sx), min(sy), max(sx), max(sy)),
+                                     m$crs, "EPSG:3857")
+  d1 <- file.path(dir, "k.tif"); d2 <- file.path(dir, "g.tif")
+  ck_warp(f, d1, t_srs = "EPSG:3857", te = te, ts = c(96L, 80L), r = "near",
+          cl_arg = c("-et", "0"))
+  gdalraster::warp(
+    f, d2, t_srs = "EPSG:3857",
+    cl_arg = c("-te", formatC(te, format = "f", digits = 10), "-ts", "96", "80",
+               "-r", "near", "-et", "0",
+               "-wo", "SKIP_NOSOURCE=YES", "-wo", "INIT_DEST=NO_DATA", "-overwrite"),
+    quiet = TRUE
+  )
+  expect_equal(raster_dim(d1)[1:2], c(96L, 80L))
+  expect_equal(raster_dim(d1), raster_dim(d2))
+  for (b in 1:3) expect_equal(read_band(d1, b), read_band(d2, b))
+})
+
+test_that("tr takes precedence over ts (with a warning)", {
+  dir <- withr::local_tempdir()
+  f <- fx_north(dir)
+  m <- cog_info(f); gt <- m$geotransform
+  te <- c(gt[1], gt[4] + 160 * gt[6], gt[1] + 192 * gt[2], gt[4])
+  d <- file.path(dir, "o.tif")
+  # both supplied -> warn, use tr (10 m over a 1920 m span -> 192 px), ignore ts
+  expect_warning(
+    ck_warp(f, d, t_srs = m$crs, te = te, tr = c(10, 10), ts = c(5, 5),
+            r = "near", tap = FALSE),
+    "ignoring"
+  )
+  expect_equal(raster_dim(d)[1:2], c(192L, 160L))
+})
+
 test_that("overview selection produces correct dims on a COG", {
   dir <- withr::local_tempdir()
   cog <- fx_cog(dir, nx = 512L, ny = 512L)

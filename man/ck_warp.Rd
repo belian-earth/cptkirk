@@ -12,6 +12,7 @@ ck_warp(
   te_srs = NULL,
   tr = NULL,
   ts = NULL,
+  tap = TRUE,
   r = c("near", "bilinear", "cubic", "cubicspline", "lanczos", "average", "rms", "mode",
     "max", "min", "med", "q1", "q3", "sum"),
   bands = NULL,
@@ -49,9 +50,18 @@ otherwise in \code{t_srs}. When supplied this is the AOI that drives the fetch.}
 
 \item{te_srs}{SRS of \code{te} (defaults to \code{t_srs}).}
 
-\item{tr}{Target resolution \code{c(xres, yres)} in target CRS units.}
+\item{tr}{Target resolution \code{c(xres, yres)} in target CRS units. Takes
+precedence over \code{ts}: if both are given, \code{ts} is ignored (with a warning).}
 
-\item{ts}{Target size \code{c(width, height)} in pixels.}
+\item{ts}{Target size \code{c(width, height)} in pixels. Ignored if \code{tr} is also
+supplied.}
+
+\item{tap}{If \code{TRUE} (default) and \code{tr} is given, align output pixel
+boundaries to the \code{tr} grid (gdalwarp \code{-tap}), anchored at the CRS origin,
+so outputs at the same resolution share a grid and stack cleanly. This
+snaps the output extent outward, so it is no longer exactly \code{te}. No effect
+with \code{ts} or on the copy path. An explicit \code{-tap} in \code{cl_arg} is always
+honoured. (\code{warp_remote()} never adds this; pass \code{-tap} yourself.)}
 
 \item{r}{Resampling method, one of \code{"near"} (default), \code{"bilinear"},
 \code{"cubic"}, \code{"cubicspline"}, \code{"lanczos"}, \code{"average"}, \code{"rms"}, \code{"mode"},

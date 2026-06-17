@@ -19,7 +19,7 @@ knitr::opts_chunk$set(
 [![Lifecycle: experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
 <!-- badges: end -->
 
-**Warp speed.** `cptkirk` is a remote, overview-aware `gdalwarp`.
+**"Warp speed!"** `cptkirk` is a remote, overview-aware `gdalwarp`.
 
 It combines two tools that are each best-in-class at one thing:
 
@@ -54,7 +54,7 @@ url <- paste0(
 cog_info(url)
 
 # warp an area of interest straight to a local GeoTIFF
-r <- warp_remote(
+r <- ck_warp(
   src    = url,
   dst    = tempfile(fileext = ".tif"),
   tr     = c(30, 30),                  # target resolution

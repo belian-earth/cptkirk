@@ -25,8 +25,16 @@
 #' @param te Target extent `c(xmin, ymin, xmax, ymax)`, in `te_srs` if given,
 #'   otherwise in `t_srs`. When supplied this is the AOI that drives the fetch.
 #' @param te_srs SRS of `te` (defaults to `t_srs`).
-#' @param tr Target resolution `c(xres, yres)` in target CRS units.
-#' @param ts Target size `c(width, height)` in pixels.
+#' @param tr Target resolution `c(xres, yres)` in target CRS units. Takes
+#'   precedence over `ts`: if both are given, `ts` is ignored (with a warning).
+#' @param ts Target size `c(width, height)` in pixels. Ignored if `tr` is also
+#'   supplied.
+#' @param tap If `TRUE` (default) and `tr` is given, align output pixel
+#'   boundaries to the `tr` grid (gdalwarp `-tap`), anchored at the CRS origin,
+#'   so outputs at the same resolution share a grid and stack cleanly. This
+#'   snaps the output extent outward, so it is no longer exactly `te`. No effect
+#'   with `ts` or on the copy path. An explicit `-tap` in `cl_arg` is always
+#'   honoured. (`warp_remote()` never adds this; pass `-tap` yourself.)
 #' @param r Resampling method, one of `"near"` (default), `"bilinear"`,
 #'   `"cubic"`, `"cubicspline"`, `"lanczos"`, `"average"`, `"rms"`, `"mode"`,
 #'   `"max"`, `"min"`, `"med"`, `"q1"`, `"q3"`, `"sum"`. Matched with
@@ -80,7 +88,7 @@
 #' @export
 ck_warp <- function(src, dst,
                     t_srs = NULL, te = NULL, te_srs = NULL,
-                    tr = NULL, ts = NULL,
+                    tr = NULL, ts = NULL, tap = TRUE,
                     r = c("near", "bilinear", "cubic", "cubicspline", "lanczos",
                           "average", "rms", "mode", "max", "min", "med",
                           "q1", "q3", "sum"),
@@ -101,6 +109,7 @@ ck_warp <- function(src, dst,
   .check_num_vec(te, 4L, "c(xmin, ymin, xmax, ymax)")
   .check_num_vec(tr, 2L, "c(xres, yres)", positive = TRUE)
   .check_num_vec(ts, 2L, "c(width, height)", positive = TRUE)
+  rlang::check_bool(tap)
   r <- rlang::arg_match(r)
   .check_bands(bands)
   cl_arg <- cl_arg %||% character(0)
@@ -112,6 +121,12 @@ ck_warp <- function(src, dst,
   .check_config(config)
   rlang::check_bool(skip_nosource)
   .check_fetch_args(overview, margin, io_concurrency, max_bytes, sanitise)
+
+  # tr is the primary resolution control: if both are given, tr wins.
+  if (!is.null(tr) && !is.null(ts)) {
+    cli::cli_warn("Both {.arg tr} and {.arg ts} supplied; using {.arg tr} and ignoring {.arg ts}.")
+    ts <- NULL
+  }
 
   if (!is.null(te)) te <- as.numeric(te)
   io <- io_concurrency %||% 16L
@@ -137,6 +152,12 @@ ck_warp <- function(src, dst,
                                    format(as.integer(round(as.numeric(ts))),
                                           scientific = FALSE, trim = TRUE))
   if (!is.null(r))      args <- c(args, "-r", r)
+  # Align output pixels to the tr grid (anchored at the CRS origin) by default,
+  # so outputs at the same resolution share a grid and stack cleanly. Only
+  # meaningful with tr; an explicit -tap in cl_arg is left as-is.
+  if (isTRUE(tap) && !is.null(tr) && !any(cl_arg == "-tap")) {
+    args <- c(args, "-tap")
+  }
   if (!is.null(num_threads) && !any(grepl("NUM_THREADS", cl_arg, fixed = TRUE))) {
     args <- c(args, "-wo", paste0("NUM_THREADS=", num_threads))
   }

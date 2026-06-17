@@ -15,7 +15,8 @@ test_that("warp_remote (cl_arg form) is bit-identical to gdalraster::warp", {
           "-wo", "INIT_DEST=NO_DATA", "-wo", "SKIP_NOSOURCE=YES", "-overwrite")
   d1 <- file.path(dir, "thin.tif"); d2 <- file.path(dir, "g.tif")
   warp_remote(f, d1, t_srs = "EPSG:3857", cl_arg = cl)
-  gdal_ref_warp(f, d2, "EPSG:3857", te, c(15, 15), r = "near")
+  # warp_remote is faithful: no auto-tap, so compare to the un-tapped reference.
+  gdal_ref_warp(f, d2, "EPSG:3857", te, c(15, 15), r = "near", tap = FALSE)
 
   expect_equal(raster_dim(d1), raster_dim(d2))
   for (b in 1:3) expect_equal(read_band(d1, b), read_band(d2, b))

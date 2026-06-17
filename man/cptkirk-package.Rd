@@ -54,6 +54,15 @@ fetch. Sources may be local paths or \verb{http(s)://}, \verb{s3://}, \verb{gs:/
 URLs.
 }
 
+\seealso{
+Useful links:
+\itemize{
+  \item \url{https://github.com/belian-earth/cptkirk}
+  \item \url{https://belian-earth.github.io/cptkirk/}
+  \item Report bugs at \url{https://github.com/belian-earth/cptkirk/issues}
+}
+
+}
 \author{
 \strong{Maintainer}: Hugh Graham \email{hugh@belian.earth}
 
