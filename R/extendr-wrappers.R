@@ -7,9 +7,11 @@ NULL
 
 #' Open a source (local path, http(s)://, s3://, gs://, az://). Returns an
 #' external pointer reused by `cog_meta()` / `cog_fetch_window()`.
+#' @noRd
 cog_open <- function(src) .Call(wrap__cog_open, src)
 
 #' Structural + georeferencing metadata for an open source.
+#' @noRd
 cog_meta <- function(h) .Call(wrap__cog_meta, h)
 
 #' Concurrently open several sources and return their metadata.
@@ -18,12 +20,14 @@ cog_meta <- function(h) .Call(wrap__cog_meta, h)
 #' round-trips) and returns a list with one `read_cog_meta`-style entry per
 #' source, in order. Used to plan a multi-tile mosaic without paying the opens
 #' sequentially.
+#' @noRd
 cog_meta_many <- function(srcs) .Call(wrap__cog_meta_many, srcs)
 
 #' Fetch a pixel window of an overview level from an open source. `level` is
 #' 1-based (1 = full resolution); `bands` is 1-based (empty = all). Returns a
 #' list with `data` (band-sequential double vector), `xsize`, `ysize`,
 #' `n_bands`.
+#' @noRd
 cog_fetch_window <- function(h, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency) .Call(wrap__cog_fetch_window, h, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency)
 
 #' Fetch a pixel window as a NATIVE-dtype byte buffer (band-sequential,
@@ -31,6 +35,7 @@ cog_fetch_window <- function(h, level, xoff, yoff, xsize, ysize, bands, fill, io
 #' `cog_fetch_window`. Returns a list with `bytes` (raw vector), `xsize`,
 #' `ysize`, `n_bands`, `dtype` (GDAL type name), `bytes_per_sample`, and
 #' `byte_order` ("LSB"/"MSB").
+#' @noRd
 cog_fetch_window_raw <- function(h, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency) .Call(wrap__cog_fetch_window_raw, h, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency)
 
 #' Concurrently fetch one native-dtype window from each of several sources.
@@ -40,6 +45,7 @@ cog_fetch_window_raw <- function(h, level, xoff, yoff, xsize, ysize, bands, fill
 #' are shared across tiles. All sources are opened and their windows fetched
 #' within a single runtime, so the tiles' network reads overlap. Returns a
 #' list with one element per tile, each as in `cog_fetch_window_raw`.
+#' @noRd
 cog_fetch_windows_raw <- function(srcs, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency) .Call(wrap__cog_fetch_windows_raw, srcs, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency)
 
 # nolint end

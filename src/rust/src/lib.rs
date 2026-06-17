@@ -29,6 +29,7 @@ struct CogSource {
 
 /// Open a source (local path, http(s)://, s3://, gs://, az://). Returns an
 /// external pointer reused by `cog_meta()` / `cog_fetch_window()`.
+/// @noRd
 #[extendr]
 fn cog_open(src: &str) -> extendr_api::Result<Robj> {
     let rt = runtime::shared_runtime().map_err(to_r)?;
@@ -37,6 +38,7 @@ fn cog_open(src: &str) -> extendr_api::Result<Robj> {
 }
 
 /// Structural + georeferencing metadata for an open source.
+/// @noRd
 #[extendr]
 fn cog_meta(h: ExternalPtr<CogSource>) -> extendr_api::Result<Robj> {
     build_meta(&h.open).map_err(to_r)
@@ -46,6 +48,7 @@ fn cog_meta(h: ExternalPtr<CogSource>) -> extendr_api::Result<Robj> {
 /// 1-based (1 = full resolution); `bands` is 1-based (empty = all). Returns a
 /// list with `data` (band-sequential double vector), `xsize`, `ysize`,
 /// `n_bands`.
+/// @noRd
 #[extendr]
 #[allow(clippy::too_many_arguments)]
 fn cog_fetch_window(
@@ -93,6 +96,7 @@ fn cog_fetch_window(
 /// `cog_fetch_window`. Returns a list with `bytes` (raw vector), `xsize`,
 /// `ysize`, `n_bands`, `dtype` (GDAL type name), `bytes_per_sample`, and
 /// `byte_order` ("LSB"/"MSB").
+/// @noRd
 #[extendr]
 #[allow(clippy::too_many_arguments)]
 fn cog_fetch_window_raw(
@@ -144,6 +148,7 @@ fn cog_fetch_window_raw(
 /// round-trips) and returns a list with one `read_cog_meta`-style entry per
 /// source, in order. Used to plan a multi-tile mosaic without paying the opens
 /// sequentially.
+/// @noRd
 #[extendr]
 fn cog_meta_many(srcs: Vec<String>) -> extendr_api::Result<Robj> {
     let rt = runtime::shared_runtime().map_err(to_r)?;
@@ -167,6 +172,7 @@ fn cog_meta_many(srcs: Vec<String>) -> extendr_api::Result<Robj> {
 /// are shared across tiles. All sources are opened and their windows fetched
 /// within a single runtime, so the tiles' network reads overlap. Returns a
 /// list with one element per tile, each as in `cog_fetch_window_raw`.
+/// @noRd
 #[extendr]
 #[allow(clippy::too_many_arguments)]
 fn cog_fetch_windows_raw(
