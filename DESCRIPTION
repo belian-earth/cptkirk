@@ -20,8 +20,10 @@ Depends:
 Imports:
     cli,
     gdalraster,
+    methods,
     rlang,
     withr
-Suggests: 
+Suggests:
+    curl,
     testthat (>= 3.0.0)
 Config/testthat/edition: 3

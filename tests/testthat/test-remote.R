@@ -4,7 +4,6 @@
 remote_cog <- "https://raw.githubusercontent.com/cogeotiff/rio-tiler/main/tests/fixtures/cog.tif"
 
 test_that("cog_info reads a remote COG", {
-  skip_on_cran()
   skip_if_offline()
   m <- cog_info(remote_cog)
   expect_gt(m$width, 0L)
@@ -14,7 +13,6 @@ test_that("cog_info reads a remote COG", {
 })
 
 test_that("warp_remote streams + warps a remote COG window", {
-  skip_on_cran()
   skip_if_offline()
   m <- cog_info(remote_cog)
   gt <- m$geotransform
