@@ -15,10 +15,15 @@ GDAL via \code{gdalraster} --- following the \code{gdalwarp} argument interface.
 }
 \section{Warping}{
 
+Two entry points onto the same engine:
 \itemize{
-\item \code{\link[=warp_remote]{warp_remote()}} --- stream, mosaic and reproject/resample remote
-(Cloud-Optimised) GeoTIFFs onto a target grid, following the \code{gdalwarp}
-argument interface (\code{t_srs} / \code{te} / \code{tr} / \code{ts} / \code{r} / \code{bands} / \code{cl_arg})
+\item \code{\link[=ck_warp]{ck_warp()}} --- the recommended, batteries-included helper: named
+\code{t_srs} / \code{te} / \code{tr} / \code{ts} / \code{r} / \code{bands} arguments plus cptkirk's
+performance defaults (multi-threading, generous warp memory and cache,
+\code{SKIP_NOSOURCE}, band-subset streaming).
+\item \code{\link[=warp_remote]{warp_remote()}} --- a faithful, defaults-free sibling of
+\code{\link[gdalraster:warp]{gdalraster::warp()}}: same \code{src} / \code{dst} / \code{t_srs} / \code{cl_arg} call shape,
+but the source is streamed remotely. Forwards \code{cl_arg} to GDAL verbatim.
 }
 }
 

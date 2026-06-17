@@ -2,62 +2,35 @@
 % Please edit documentation in R/warp_remote.R
 \name{warp_remote}
 \alias{warp_remote}
-\title{Warp a remote GeoTIFF / COG, streaming only the pixels GDAL needs}
+\title{Warp a remote GeoTIFF / COG (a streaming sibling of gdalraster::warp)}
 \usage{
 warp_remote(
   src,
   dst,
-  t_srs = NULL,
-  te = NULL,
-  te_srs = NULL,
-  tr = NULL,
-  ts = NULL,
-  r = "near",
-  bands = NULL,
-  cl_arg = character(0),
+  t_srs = "",
+  cl_arg = NULL,
   overview = NULL,
   margin = 8L,
   io_concurrency = 16L,
   max_bytes = NULL,
-  num_threads = "ALL_CPUS",
-  warp_memory = NULL,
-  cache_max = NULL,
-  co = NULL,
-  config = NULL,
-  skip_nosource = TRUE
+  sanitise = TRUE,
+  quiet = TRUE
 )
 }
 \arguments{
 \item{src}{Path/URL to a source GeoTIFF / COG, a \code{\link[=cog_source]{cog_source()}} handle, or a
-\strong{character vector of several} sources to mosaic (each tile's overlapping
-window is fetched and the set is reprojected/mosaicked in one warp;
-non-overlapping tiles are skipped). Passing a \code{\link[=cog_source]{cog_source()}} reuses its
-already-open handle, skipping the metadata re-read -- worthwhile when
-warping many AOIs from the same source.}
+character vector of several sources to mosaic. A \code{\link[=cog_source]{cog_source()}} reuses its
+already-open handle, skipping the metadata re-read.}
 
-\item{dst}{Output filename (a regular path, a \verb{/vsimem/} path, or anything
-GDAL can write). The format is inferred by GDAL or set with \code{-of} in
-\code{cl_arg}.}
+\item{dst}{Output filename (a regular path, \verb{/vsimem/}, or anything GDAL can
+write). The format is inferred by GDAL or set with \code{-of} in \code{cl_arg}.}
 
-\item{t_srs}{Target SRS (e.g. \code{"EPSG:3857"}). If \code{NULL}, the source CRS is
-used (no reprojection).}
+\item{t_srs}{Target SRS (e.g. \code{"EPSG:3857"}), as in \code{\link[gdalraster:warp]{gdalraster::warp()}}.
+\code{""} (the default) or \code{NULL} means no reprojection (source CRS).}
 
-\item{te}{Target extent \code{c(xmin, ymin, xmax, ymax)}, in \code{te_srs} if given,
-otherwise in \code{t_srs}. When supplied this is the AOI that drives the fetch.}
-
-\item{te_srs}{SRS of \code{te} (defaults to \code{t_srs}).}
-
-\item{tr}{Target resolution \code{c(xres, yres)} in target CRS units.}
-
-\item{ts}{Target size \code{c(width, height)} in pixels.}
-
-\item{r}{Resampling method (\code{"near"}, \code{"bilinear"}, \code{"cubic"}, ...).}
-
-\item{bands}{1-based source bands to read (default: all). Subsetting happens
-during the fetch, so only those bands' bytes are streamed.}
-
-\item{cl_arg}{Character vector of extra raw \code{gdalwarp} flags, forwarded
-verbatim to \code{\link[gdalraster:warp]{gdalraster::warp()}} (e.g. \code{c("-overwrite", "-wo", "NUM_THREADS=ALL_CPUS")}).}
+\item{cl_arg}{Character vector of raw \code{gdalwarp} flags, forwarded verbatim to
+\code{\link[gdalraster:warp]{gdalraster::warp()}} (e.g. \code{c("-te", "0", "0", "100", "100", "-tr", "10", "10", "-r", "bilinear")}). cptkirk parses \code{-te}/\code{-te_srs}/\code{-tr}/\code{-ts} from
+it purely to size the fetch.}
 
 \item{overview}{Force a 1-based IFD/overview level instead of auto-selecting
 from the output resolution. \code{1} = full resolution.}
@@ -66,53 +39,41 @@ from the output resolution. \code{1} = full resolution.}
 the resampling kernel and reprojection slop (default 8).}
 
 \item{io_concurrency}{Number of concurrent tile reads -- the width of the
-single global fetch pool shared across all source tiles. Default 16, which
-suits object stores that throttle around that many simultaneous range
-requests (e.g. S3 / source.coop). Raise (24-32) on a fast, stable link;
-lower if a store rate-limits.}
+single global fetch pool shared across all source tiles (default 16).}
 
-\item{max_bytes}{Safety ceiling (bytes) on the staged in-memory window
-(\verb{width * height * bands * <native dtype bytes>}). \code{NULL} (default) uses
-~1/3 of system RAM. It only guards against the foot-gun of warping a whole
-large multi-band raster at native resolution; narrow the request, coarsen
-\code{tr}/\code{ts}, or raise this to allow it.}
+\item{max_bytes}{Safety ceiling (bytes) on the staged in-memory window.
+\code{NULL} (default) uses ~1/3 of system RAM.}
 
-\item{num_threads}{Value for GDAL's warp \code{NUM_THREADS} warp option and the
-\code{GDAL_NUM_THREADS} config (default \code{"ALL_CPUS"}), parallelising the
-resampling computation and GeoTIFF (de)compression. \code{NULL} leaves them
-unset. GDAL's \code{-multi} (threaded warp I/O) may be passed via \code{cl_arg};
-warps always run silently (no progress callback), so it is safe.}
+\item{sanitise}{If \code{TRUE} (default), validate \code{cl_arg} (and \code{t_srs}) against
+a tiny metadata-derived stand-in \emph{before} fetching, so a bad CRS,
+resampling method, creation option or unknown flag fails in milliseconds
+instead of after a remote read. Set \code{FALSE} to skip the check.}
 
-\item{warp_memory}{Warp working memory in MB (GDAL \code{-wm}). Default: ~25\% of
-system RAM, clamped to 256-2048 MB. Bigger means fewer, larger chunks.}
-
-\item{cache_max}{GDAL block cache in MB for this call. Default: ~25\% of RAM,
-clamped to 256-2000 MB. Restored to the previous value afterwards.}
-
-\item{co}{Character vector of GDAL output creation options, e.g.
-\code{c("COMPRESS=ZSTD", "TILED=YES", "NUM_THREADS=ALL_CPUS")}.}
-
-\item{config}{Named character vector / list of extra GDAL config options to
-set for the duration of the call (restored on exit).}
-
-\item{skip_nosource}{If \code{TRUE} (default), pass \code{SKIP_NOSOURCE=YES} +
-\code{INIT_DEST} so the warper skips output chunks with no source coverage
-(e.g. nodata margins from reprojection). No effect when output is fully
-covered. Ignored on the copy fast-path.}
+\item{quiet}{If \code{TRUE} (default), the GDAL warp runs without a progress
+callback. Unlike \code{\link[gdalraster:warp]{gdalraster::warp()}} this defaults to \code{TRUE}: a progress
+callback invoked from GDAL's worker threads (e.g. with \code{-multi}) can crash
+the R session.}
 }
 \value{
 The \code{dst} path, invisibly.
 }
 \description{
-A remote, overview-aware \code{gdalwarp}. cptkirk works out which source pixels
-the requested warp will touch, streams only those tiles over \code{async-tiff}
-(at the appropriate overview level), stages them as an in-memory GDAL
-source, then hands the warp to GDAL via \code{\link[gdalraster:warp]{gdalraster::warp()}}. Every actual
-resampling / reprojection decision is GDAL's; cptkirk only sizes the fetch.
+A near drop-in for \code{\link[gdalraster:warp]{gdalraster::warp()}} that reads its source(s) remotely.
+The call shape is the same -- \code{src}, \code{dst}, \code{t_srs}, and a raw \code{gdalwarp}
+argument vector in \code{cl_arg} -- but instead of letting GDAL pull the source
+over \verb{/vsicurl}, cptkirk works out which pixels the request touches and
+streams just those tiles over the Rust \code{async-tiff} reader (at the
+appropriate overview level), stages them in \verb{/vsimem}, then hands the warp to
+GDAL. Output is identical to \code{\link[gdalraster:warp]{gdalraster::warp()}} of the same source.
 }
 \details{
-The target grid follows the \code{gdalwarp} API. Pass the geometry-defining
-options as named arguments (\code{t_srs}, \code{te}, \code{tr}, \code{ts}, \code{r}) and/or hand any
-additional raw \code{gdalwarp} flags through \code{cl_arg}; the full set is forwarded
-to \code{\link[gdalraster:warp]{gdalraster::warp()}}.
+This is the faithful low-level interface: it adds none of cptkirk's
+performance opinions and forwards \code{cl_arg} to GDAL verbatim. For the
+recommended, batteries-included helper (named \code{te}/\code{tr}/\code{ts}/\code{r}/\code{bands}
+arguments, multi-threading, \code{SKIP_NOSOURCE}, band-subset streaming, ...) use
+\code{\link[=ck_warp]{ck_warp()}}.
+}
+\seealso{
+\code{\link[=ck_warp]{ck_warp()}} for the recommended helper with named arguments and
+cptkirk's defaults.
 }

@@ -9,9 +9,14 @@
 #' GDAL via `gdalraster` --- following the `gdalwarp` argument interface.
 #'
 #' @section Warping:
-#' - [warp_remote()] --- stream, mosaic and reproject/resample remote
-#'   (Cloud-Optimised) GeoTIFFs onto a target grid, following the `gdalwarp`
-#'   argument interface (`t_srs` / `te` / `tr` / `ts` / `r` / `bands` / `cl_arg`)
+#' Two entry points onto the same engine:
+#' - [ck_warp()] --- the recommended, batteries-included helper: named
+#'   `t_srs` / `te` / `tr` / `ts` / `r` / `bands` arguments plus cptkirk's
+#'   performance defaults (multi-threading, generous warp memory and cache,
+#'   `SKIP_NOSOURCE`, band-subset streaming).
+#' - [warp_remote()] --- a faithful, defaults-free sibling of
+#'   [gdalraster::warp()]: same `src` / `dst` / `t_srs` / `cl_arg` call shape,
+#'   but the source is streamed remotely. Forwards `cl_arg` to GDAL verbatim.
 #'
 #' @section Inspection:
 #' - [cog_info()] --- read a source's structure and georeferencing (header and

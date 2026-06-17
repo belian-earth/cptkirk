@@ -12,7 +12,7 @@ test_that("cog_info reads a remote COG", {
   expect_length(m$geotransform, 6L)
 })
 
-test_that("warp_remote streams + warps a remote COG window", {
+test_that("ck_warp streams + warps a remote COG window", {
   skip_if_offline()
   m <- cog_info(remote_cog)
   gt <- m$geotransform
@@ -23,8 +23,8 @@ test_that("warp_remote streams + warps a remote COG window", {
                                      m$crs, "EPSG:3857")
   dir <- withr::local_tempdir()
   d <- file.path(dir, "remote.tif")
-  warp_remote(remote_cog, d, t_srs = "EPSG:3857", te = te, tr = c(150, 150),
-              r = "near")
+  ck_warp(remote_cog, d, t_srs = "EPSG:3857", te = te, tr = c(150, 150),
+          r = "near")
 
   expect_equal(raster_dim(d)[3], m$n_bands)
   v <- read_band(d, 1)

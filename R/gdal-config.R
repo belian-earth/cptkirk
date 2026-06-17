@@ -58,3 +58,13 @@
 .default_max_bytes <- function() {
   max(1e9, .sys_ram_bytes() / 3)
 }
+
+# Resolve a tri-state performance knob (cache_max, warp_memory):
+#   "auto" -> cptkirk's RAM-derived default via `auto_fn()`
+#   NULL   -> NULL ("defer": leave the env/session value untouched)
+#   number -> that value, multiplied by `scale` (e.g. MB -> bytes).
+.resolve_speed <- function(x, auto_fn, scale = 1) {
+  if (is.null(x)) return(NULL)
+  if (identical(x, "auto")) return(auto_fn())
+  as.numeric(x) * scale
+}
