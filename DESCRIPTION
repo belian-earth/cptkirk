@@ -3,13 +3,13 @@ Title: Warp-Speed Remote GDAL Warping of Cloud-Optimised GeoTIFFs
 Version: 0.1.0
 Authors@R:
     person("Hugh", "Graham", , "hugh@belian.earth", role = c("aut", "cre"))
-Description: A remote, overview-aware gdalwarp. cptkirk works out which source
-    pixels a requested warp will touch, streams only those tiles over the
-    Rust 'async-tiff' reader (with high remote-read saturation, at the
-    appropriate overview level), stages them as an in-memory GDAL source, then
-    hands the actual reprojection and resampling to GDAL via 'gdalraster',
-    following the gdalwarp argument interface.
-License: MIT + file LICENSE
+Description: Warps remote Cloud-Optimised GeoTIFFs at speed by saturating the
+    network with concurrent byte-range reads. cptkirk works out which source
+    pixels a requested warp will touch, streams only those tiles over the Rust
+    'async-tiff' reader (at the appropriate overview level), stages them as an
+    in-memory GDAL source, then hands the actual reprojection and resampling to
+    GDAL via 'gdalraster', following the gdalwarp argument interface.
+License: Apache License (>= 2)
 URL: https://github.com/belian-earth/cptkirk, https://belian-earth.github.io/cptkirk/
 BugReports: https://github.com/belian-earth/cptkirk/issues
 Encoding: UTF-8

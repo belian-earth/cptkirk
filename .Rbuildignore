@@ -10,3 +10,5 @@
 ^bench$
 ^\.claude$
 ^scratch\.R$
+^LICENSE\.md$
+^\.github$

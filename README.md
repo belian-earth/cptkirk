@@ -7,9 +7,12 @@
 
 [![Lifecycle:
 experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
+[![R-CMD-check](https://github.com/belian-earth/cptkirk/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/belian-earth/cptkirk/actions/workflows/R-CMD-check.yaml)
 <!-- badges: end -->
 
-**Warp speed.** `cptkirk` is a remote, overview-aware `gdalwarp`.
+**“Warp speed!”** `cptkirk` warps remote Cloud-Optimised GeoTIFFs fast:
+it saturates the network with concurrent reads, then hands the warp to
+GDAL.
 
 It combines two tools that are each best-in-class at one thing:
 
@@ -25,7 +28,24 @@ it works out exactly which source pixels the warp will need, streams
 only those tiles over `async-tiff` at the appropriate overview level,
 stages them as an in-memory GDAL source, then hands the actual
 reprojection and resampling to GDAL. It reimplements none of GDAL’s warp
-logic; it only sizes the fetch.
+logic; it only sizes and saturates the fetch.
+
+## Two ways in
+
+- [`ck_warp()`](https://belian-earth.github.io/cptkirk/reference/ck_warp.html)
+  is the recommended, batteries-included entry point, with named `t_srs`
+  / `te` / `tr` / `ts` / `r` / `bands` arguments plus sensible defaults
+  (multi-threaded warp, generous working memory, and `tr`-grid-aligned
+  output so tiles at the same resolution stack cleanly).
+- [`warp_remote()`](https://belian-earth.github.io/cptkirk/reference/warp_remote.html)
+  is a faithful, defaults-free sibling of `gdalraster::warp()`, with the
+  same `src` / `dst` / `t_srs` / `cl_arg` call shape but the source
+  streamed remotely. Reach for it when you want GDAL’s exact behaviour
+  with full control via `cl_arg`.
+
+Both validate the request against a tiny in-memory probe *before*
+fetching, so a bad CRS, resampling method or creation option fails in
+milliseconds instead of after a download.
 
 ## Installation
 
@@ -41,9 +61,11 @@ library(cptkirk)
 
 # inspect a remote COG (header + IFDs only, no pixels fetched)
 url <- paste0(
-  "https://data.source.coop/tge-labs/aef/v1/annual/2021/36S/","xekh5rjs4wg6wb9b4-0000000000-0000000000.tiff")
+  "https://data.source.coop/tge-labs/aef/v1/annual/2021/36S/",
+  "xekh5rjs4wg6wb9b4-0000000000-0000000000.tiff"
+)
 
-cog_info(url)
+(m <- cog_info(url))
 #> ── cog_info ────────────────────────────────────────────────────────────────────
 #> <https://data.source.coop/tge-labs/aef/v1/annual/2021/36S/xekh5rjs4wg6wb9b4-0000000000-0000000000.tiff>
 #> size: 8192 x 8192 px (67.1 Mpx)
@@ -55,18 +77,24 @@ cog_info(url)
 #> 128x128, 64x64, 32x32, 16x16, 8x8, 4x4, 2x2, 1x1)
 #> band names: "A00", "A01", "A02", "A03", "A04", "A05", …, "A62", and "A63"
 
-# warp an area of interest straight to a local GeoTIFF
-r <- warp_remote(
-  src    = url,
-  dst    = tempfile(fileext = ".tif"),
-  tr     = c(30, 30),                  # target resolution
-  r      = "average",
-  bands  = c(1, 2, 3)                   # subset bands
+# warp just a ~6 km window of the tile -- only the source tiles covering this
+# extent are streamed
+gt <- m$geotransform
+x0 <- gt[1] + 4000 * gt[2]
+y0 <- gt[4] + 4000 * gt[6]
+te <- c(x0, y0 - 6000, x0 + 6000, y0)   # AOI in the tile's CRS (EPSG:32736)
+
+r <- ck_warp(
+  src   = url,
+  dst   = tempfile(fileext = ".tif"),
+  te    = te,                # area of interest
+  tr    = c(30, 30),         # 30 m output (an overview is selected)
+  r     = "average",
+  bands = c(1, 2, 3)         # subset bands at the fetch
 )
 
-
 ds <- new(gdalraster::GDALRaster, r)
-gdalraster::plot_raster(ds, xsize=800, ysize=800)
+gdalraster::plot_raster(ds, xsize = 800, ysize = 800)
 ```
 
 <img src="man/figures/README-unnamed-chunk-2-1.png" alt="" width="100%" />
@@ -75,9 +103,25 @@ gdalraster::plot_raster(ds, xsize=800, ysize=800)
 ds$close()
 ```
 
-`te`/`tr`/`ts`/`r`/`t_srs` follow the `gdalwarp` interface. Any
-additional raw `gdalwarp` flags pass straight through via `cl_arg` and
-are forwarded to `gdalraster::warp()`.
+`t_srs` / `te` / `tr` / `ts` / `r` follow the `gdalwarp` interface, and
+any extra raw flags pass straight through via `cl_arg`. `ck_warp()`
+aligns output to the `tr` grid by default (gdalwarp `-tap`); set
+`tap = FALSE`, or use `warp_remote()`, for GDAL’s exact requested
+extent.
+
+Warping many areas from the same raster? Open it once with
+[`cog_source()`](https://belian-earth.github.io/cptkirk/reference/cog_source.html)
+and pass the handle in place of the URL to pay the metadata round-trips
+only once.
+
+## Authentication
+
+Remote object-store sources (`s3://`, `gs://`, `az://`) authenticate
+from the **process environment**, using the variable names
+`object_store` documents (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`
+/ `AWS_REGION`, `GOOGLE_SERVICE_ACCOUNT`, `AZURE_STORAGE_ACCOUNT_NAME`,
+…). Credentials never pass through R. For public buckets set
+`AWS_SKIP_SIGNATURE=true`, or just use the `https://` URL.
 
 ## How it picks what to fetch
 
