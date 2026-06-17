@@ -21,3 +21,4 @@ Rplots.pdf
 # local dev scripts (hardcoded private paths)
 scratch.R
 bench/
+docs
