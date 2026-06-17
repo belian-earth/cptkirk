@@ -31,7 +31,7 @@ ck_warp(
   num_threads = "ALL_CPUS",
   warp_memory = "auto",
   cache_max = "auto",
-  co = NULL,
+  co = c("COMPRESS=DEFLATE", "TILED=YES", "NUM_THREADS=ALL_CPUS", "BIGTIFF=IF_SAFER"),
   config = NULL,
   skip_nosource = TRUE,
   overview = NULL,
@@ -145,8 +145,16 @@ ck_warp(
 
 - co:
 
-  Character vector of GDAL output creation options, e.g.
-  `c("COMPRESS=ZSTD", "TILED=YES", "NUM_THREADS=ALL_CPUS")`.
+  GDAL output creation options, defaulting to a cloud-friendly GeoTIFF
+  set:
+  `c("COMPRESS=DEFLATE", "TILED=YES", "NUM_THREADS=ALL_CPUS", "BIGTIFF=IF_SAFER")`
+  — losslessly compressed, tiled (so the output can be re-read by
+  cptkirk and any other COG reader), compressed in parallel, and
+  promoted to BigTIFF when it might exceed 4 GB. Pass your own to
+  override (e.g. add `"PREDICTOR=2"` for integer data, or
+  `"COMPRESS=ZSTD"` on a GDAL built with it), or `NULL` for no creation
+  options. These target the GTiff/COG drivers; set `co` yourself for
+  other output formats.
 
 - config:
 

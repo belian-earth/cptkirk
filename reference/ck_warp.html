@@ -71,7 +71,7 @@ of <code><a href="https://firelab.github.io/gdalraster/reference/warp.html" clas
 <span>  num_threads <span class="op">=</span> <span class="st">"ALL_CPUS"</span>,</span>
 <span>  warp_memory <span class="op">=</span> <span class="st">"auto"</span>,</span>
 <span>  cache_max <span class="op">=</span> <span class="st">"auto"</span>,</span>
-<span>  co <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  co <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"COMPRESS=DEFLATE"</span>, <span class="st">"TILED=YES"</span>, <span class="st">"NUM_THREADS=ALL_CPUS"</span>, <span class="st">"BIGTIFF=IF_SAFER"</span><span class="op">)</span>,</span>
 <span>  config <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  skip_nosource <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  overview <span class="op">=</span> <span class="cn">NULL</span>,</span>
@@ -175,8 +175,13 @@ explicitly. Any value is restored to the previous setting afterwards.</p></dd>
 
 
 <dt id="arg-co">co<a class="anchor" aria-label="anchor" href="#arg-co"></a></dt>
-<dd><p>Character vector of GDAL output creation options, e.g.
-<code>c("COMPRESS=ZSTD", "TILED=YES", "NUM_THREADS=ALL_CPUS")</code>.</p></dd>
+<dd><p>GDAL output creation options, defaulting to a cloud-friendly
+GeoTIFF set: <code>c("COMPRESS=DEFLATE", "TILED=YES", "NUM_THREADS=ALL_CPUS", "BIGTIFF=IF_SAFER")</code> — losslessly compressed, tiled (so the output can be
+re-read by cptkirk and any other COG reader), compressed in parallel, and
+promoted to BigTIFF when it might exceed 4 GB. Pass your own to override
+(e.g. add <code>"PREDICTOR=2"</code> for integer data, or <code>"COMPRESS=ZSTD"</code> on a GDAL
+built with it), or <code>NULL</code> for no creation options. These target the
+GTiff/COG drivers; set <code>co</code> yourself for other output formats.</p></dd>
 
 
 <dt id="arg-config">config<a class="anchor" aria-label="anchor" href="#arg-config"></a></dt>
