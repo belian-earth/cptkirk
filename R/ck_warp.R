@@ -57,8 +57,14 @@
 #'   uses ~25% of RAM, clamped to 256-2000 MB; `NULL` defers to the ambient
 #'   `GDAL_CACHEMAX` (env / `gdalraster::set_config_option()`); a number sets it
 #'   explicitly. Any value is restored to the previous setting afterwards.
-#' @param co Character vector of GDAL output creation options, e.g.
-#'   `c("COMPRESS=ZSTD", "TILED=YES", "NUM_THREADS=ALL_CPUS")`.
+#' @param co GDAL output creation options, defaulting to a cloud-friendly
+#'   GeoTIFF set: `c("COMPRESS=DEFLATE", "TILED=YES", "NUM_THREADS=ALL_CPUS",
+#'   "BIGTIFF=IF_SAFER")` --- losslessly compressed, tiled (so the output can be
+#'   re-read by cptkirk and any other COG reader), compressed in parallel, and
+#'   promoted to BigTIFF when it might exceed 4 GB. Pass your own to override
+#'   (e.g. add `"PREDICTOR=2"` for integer data, or `"COMPRESS=ZSTD"` on a GDAL
+#'   built with it), or `NULL` for no creation options. These target the
+#'   GTiff/COG drivers; set `co` yourself for other output formats.
 #' @param config Named character vector / list of extra GDAL config options to
 #'   set for the duration of the call (restored on exit).
 #' @param skip_nosource If `TRUE` (default), pass `SKIP_NOSOURCE=YES` +
@@ -94,8 +100,10 @@ ck_warp <- function(src, dst,
                           "q1", "q3", "sum"),
                     bands = NULL, cl_arg = character(0),
                     num_threads = "ALL_CPUS", warp_memory = "auto",
-                    cache_max = "auto", co = NULL, config = NULL,
-                    skip_nosource = TRUE,
+                    cache_max = "auto",
+                    co = c("COMPRESS=DEFLATE", "TILED=YES",
+                           "NUM_THREADS=ALL_CPUS", "BIGTIFF=IF_SAFER"),
+                    config = NULL, skip_nosource = TRUE,
                     overview = NULL, margin = 8L,
                     io_concurrency = 16L, max_bytes = NULL, sanitise = TRUE) {
   rlang::check_required(src)

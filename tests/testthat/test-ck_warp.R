@@ -14,6 +14,24 @@ test_that("copy fast-path round-trips the source pixels and grid", {
   expect_equal(cog_info(d)$geotransform, cog_info(f)$geotransform, tolerance = 1e-6)
 })
 
+test_that("ck_warp writes compressed, tiled output by default", {
+  dir <- withr::local_tempdir()
+  f <- fx_north(dir)
+  compression <- function(p) {
+    ds <- methods::new(gdalraster::GDALRaster, p)
+    on.exit(ds$close(), add = TRUE)
+    ds$getMetadataItem(band = 0L, "COMPRESSION", "IMAGE_STRUCTURE")
+  }
+  d1 <- file.path(dir, "z.tif")
+  d2 <- file.path(dir, "u.tif")
+  ck_warp(f, d1)               # default co -> DEFLATE + TILED + ...
+  ck_warp(f, d2, co = NULL)    # opt out -> uncompressed
+  expect_match(compression(d1), "DEFLATE")
+  expect_identical(compression(d2), "")
+  # the tiled default output re-reads through cptkirk's tiling-requiring reader
+  expect_no_error(cog_info(d1))
+})
+
 test_that("band subset selects and reorders bands", {
   dir <- withr::local_tempdir()
   f <- fx_north(dir)
