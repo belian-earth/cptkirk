@@ -24,6 +24,12 @@ Two entry points onto the same engine:
   same `src` / `dst` / `t_srs` / `cl_arg` call shape, but the source is
   streamed remotely. Forwards `cl_arg` to GDAL verbatim.
 
+- [`ck_read()`](https://belian-earth.github.io/cptkirk/reference/ck_read.md)
+  —
+  [`ck_warp()`](https://belian-earth.github.io/cptkirk/reference/ck_warp.md)
+  that returns the result as an R matrix/array instead of writing a
+  file, for quick extraction and inspection.
+
 ## Inspection
 
 - [`cog_info()`](https://belian-earth.github.io/cptkirk/reference/cog_info.md)

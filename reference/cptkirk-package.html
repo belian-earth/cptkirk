@@ -26,6 +26,10 @@ GDAL via gdalraster — following the gdalwarp argument interface."><meta proper
 
     <div id="navbar" class="collapse navbar-collapse ms-3">
       <ul class="navbar-nav me-auto"><li class="active nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
+<li class="nav-item dropdown">
+  <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
+  <ul class="dropdown-menu" aria-labelledby="dropdown-articles"><li><a class="dropdown-item" href="../articles/remote-sources.html">Remote sources: storage, authentication and windows</a></li>
+  </ul></li>
       </ul><ul class="navbar-nav"><li class="nav-item"><form class="form-inline" role="search">
  <input class="form-control" type="search" name="search-input" id="search-input" autocomplete="off" aria-label="Search site" placeholder="Search for" data-search-index="../search.json"></form></li>
 <li class="nav-item"><a class="external-link nav-link" href="https://github.com/belian-earth/cptkirk"><span class="fa fa-github"></span></a></li>
@@ -62,6 +66,8 @@ performance defaults (multi-threading, generous warp memory and cache,
 <li><p><code><a href="warp_remote.html">warp_remote()</a></code> — a faithful, defaults-free sibling of
 <code><a href="https://firelab.github.io/gdalraster/reference/warp.html" class="external-link">gdalraster::warp()</a></code>: same <code>src</code> / <code>dst</code> / <code>t_srs</code> / <code>cl_arg</code> call shape,
 but the source is streamed remotely. Forwards <code>cl_arg</code> to GDAL verbatim.</p></li>
+<li><p><code><a href="ck_read.html">ck_read()</a></code> — <code><a href="ck_warp.html">ck_warp()</a></code> that returns the result as an R matrix/array
+instead of writing a file, for quick extraction and inspection.</p></li>
 </ul></div>
     <div class="section level2">
     <h2 id="inspection">Inspection<a class="anchor" aria-label="anchor" href="#inspection"></a></h2>

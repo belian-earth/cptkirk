@@ -75,19 +75,19 @@ url <- paste0(
 gt <- m$geotransform
 x0 <- gt[1] + 4000 * gt[2]
 y0 <- gt[4] + 4000 * gt[6]
-te <- c(x0, y0 - 6000, x0 + 6000, y0)   # AOI in the tile's CRS (EPSG:32736)
+te <- c(x0, y0 - 8000, x0 + 8000, y0)   # AOI in the tile's CRS (EPSG:32736)
 
 r <- ck_warp(
   src   = url,
   dst   = tempfile(fileext = ".tif"),
   te    = te,                # area of interest
-  tr    = c(30, 30),         # 30 m output (an overview is selected)
+  tr    = c(15, 15),         # 12 m output (an overview is selected)
   r     = "average",
-  bands = c(1, 2, 3)         # subset bands at the fetch
+  bands = c(11,10,9)         # subset bands at the fetch
 )
 
 ds <- new(gdalraster::GDALRaster, r)
-gdalraster::plot_raster(ds, xsize = 800, ysize = 800)
+gdalraster::plot_raster(ds)
 ```
 
 ![](reference/figures/README-unnamed-chunk-2-1.png)
@@ -104,6 +104,24 @@ aligns output to the `tr` grid by default (gdalwarp `-tap`); set
 `tap = FALSE`, or use
 [`warp_remote()`](https://belian-earth.github.io/cptkirk/reference/warp_remote.md),
 for GDAL’s exact requested extent.
+
+### Pixels straight into R
+
+[`ck_read()`](https://belian-earth.github.io/cptkirk/reference/ck_read.md)
+is
+[`ck_warp()`](https://belian-earth.github.io/cptkirk/reference/ck_warp.md)
+that hands back a base-R array — carrying `geotransform` / `crs` /
+`nodata` attributes — instead of writing a file, handy for quick
+extraction and inspection:
+
+``` r
+
+a <- ck_read(url, te = te, tr = c(30, 30), bands = c(11, 10, 9))
+dim(a)                # c(nrow, ncol, nband)
+#> [1] 267 267   3
+names(attributes(a))  # dim, plus geotransform / crs / nodata
+#> [1] "dim"          "geotransform" "crs"          "nodata"
+```
 
 Warping many areas from the same raster? Open it once with
 [`cog_source()`](https://belian-earth.github.io/cptkirk/reference/cog_source.html)
@@ -145,6 +163,8 @@ onto a target grid, following the gdalwarp argument interface.
 - [`warp_remote()`](https://belian-earth.github.io/cptkirk/reference/warp_remote.md)
   : Warp a remote GeoTIFF / COG (a streaming sibling of
   gdalraster::warp)
+- [`ck_read()`](https://belian-earth.github.io/cptkirk/reference/ck_read.md)
+  : Warp a remote GeoTIFF / COG straight into an R array
 
 ## Inspection
 
@@ -153,6 +173,19 @@ the handle across calls.
 
 - [`cog_info()`](https://belian-earth.github.io/cptkirk/reference/cog_info.md)
   : Inspect a (remote) GeoTIFF / COG
+
+- [`as.data.frame(`*`<cog_info>`*`)`](https://belian-earth.github.io/cptkirk/reference/as.data.frame.cog_info.md)
+  [`as.data.frame(`*`<cog_info_list>`*`)`](https://belian-earth.github.io/cptkirk/reference/as.data.frame.cog_info.md)
+  :
+
+  Tidy one-row-per-source summary of `cog_info` metadata
+
 - [`cog_source()`](https://belian-earth.github.io/cptkirk/reference/cog_source.md)
   : Open a (remote) GeoTIFF / COG once and reuse it
 
+# Articles
+
+### All vignettes
+
+- [Remote sources: storage, authentication and
+  windows](https://belian-earth.github.io/cptkirk/articles/remote-sources.md):
