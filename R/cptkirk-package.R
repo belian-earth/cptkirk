@@ -17,6 +17,8 @@
 #' - [warp_remote()] --- a faithful, defaults-free sibling of
 #'   [gdalraster::warp()]: same `src` / `dst` / `t_srs` / `cl_arg` call shape,
 #'   but the source is streamed remotely. Forwards `cl_arg` to GDAL verbatim.
+#' - [ck_read()] --- [ck_warp()] that returns the result as an R matrix/array
+#'   instead of writing a file, for quick extraction and inspection.
 #'
 #' @section Inspection:
 #' - [cog_info()] --- read a source's structure and georeferencing (header and

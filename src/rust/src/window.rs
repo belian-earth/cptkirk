@@ -583,6 +583,15 @@ fn plan_tile(open: &OpenTiff, req: &WindowReq, bands0: &[usize]) -> Result<TileP
 /// `concurrency` until all tiles are done -- no per-tile budget, no uneven
 /// tail when tiles cover different amounts of the AOI. Each decoded COG tile is
 /// blitted into its source tile's output buffer as it arrives.
+///
+/// We deliberately do NOT coalesce a source's tile byte ranges into fewer
+/// merged `get_ranges` requests (the rustycogs / "one request per file"
+/// approach). Benchmarked on the 4-tile AEF -> ESD mosaic it was consistently
+/// slower (~66s vs ~48s) with a pathological tail (one 235s run): the planar
+/// 64-band layout scatters a window's ranges across the whole file, so
+/// coalescing either over-merges (fetching gap bytes between band planes) or
+/// erodes the request concurrency that saturation -- cptkirk's whole speed
+/// lever -- depends on. Many small concurrent reads win here.
 pub(crate) async fn fetch_windows_pooled(
     opens: &[OpenTiff],
     reqs: &[WindowReq],
