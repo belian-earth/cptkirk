@@ -4,21 +4,35 @@
 \alias{cog_info}
 \title{Inspect a (remote) GeoTIFF / COG}
 \usage{
-cog_info(src)
+cog_info(src, as.data.frame = FALSE)
 }
 \arguments{
-\item{src}{Path or URL to a GeoTIFF / Cloud-Optimised GeoTIFF, or a
-\code{\link[=cog_source]{cog_source()}} handle.}
+\item{src}{Path/URL to a GeoTIFF / Cloud-Optimised GeoTIFF, a \code{\link[=cog_source]{cog_source()}}
+handle, or a \strong{character vector of several} sources.}
+
+\item{as.data.frame}{If \code{TRUE}, return the one-row-per-source data frame
+(see \code{\link[=as.data.frame.cog_info]{as.data.frame.cog_info()}}) instead of the \code{cog_info} object(s).
+Default \code{FALSE}.}
 }
 \value{
-A list (class \code{cog_info}) with \code{width}, \code{height}, \code{n_bands},
-\code{dtype} (GDAL type name), \code{nodata}, \code{geotransform} (GDAL corner-based
-affine, length 6), \code{crs} (a string GDAL can import), \code{band_names}, and the
-per-level pixel sizes \code{level_width} / \code{level_height} (level 1 = full
-resolution, the rest overviews) plus their \code{tile_width} / \code{tile_height}.
+For a single source, a list of class \code{cog_info} with \code{width},
+\code{height}, \code{n_bands}, \code{dtype} (GDAL type name), \code{nodata}, \code{geotransform}
+(GDAL corner-based affine, length 6), \code{crs} (a string GDAL can import),
+\code{band_names}, and the per-level pixel sizes \code{level_width} / \code{level_height}
+(level 1 = full resolution, the rest overviews) plus their \code{tile_width} /
+\code{tile_height}. For several sources, a \code{cog_info_list} of such objects. With
+\code{as.data.frame = TRUE}, a data frame of one row per source.
 }
 \description{
 Reads only the GeoTIFF header and IFDs over a remote-capable reader
 (local path, \verb{http(s)://}, \verb{s3://}, \verb{gs://}, \verb{az://}) and returns its
 georeferencing and structure. No pixel data is fetched.
+}
+\details{
+Pass several sources to inspect a set at once -- the metadata reads run
+concurrently, and the result is a \code{cog_info_list} whose print method
+summarises the set (shared vs varying CRS / resolution / bands, and combined
+extent) -- handy for vetting tiles before a mosaic. Convert either form to a
+tidy one-row-per-source data frame with \code{\link[=as.data.frame]{as.data.frame()}} (or
+\code{as.data.frame = TRUE}).
 }
