@@ -24,6 +24,8 @@ performance defaults (multi-threading, generous warp memory and cache,
 \item \code{\link[=warp_remote]{warp_remote()}} --- a faithful, defaults-free sibling of
 \code{\link[gdalraster:warp]{gdalraster::warp()}}: same \code{src} / \code{dst} / \code{t_srs} / \code{cl_arg} call shape,
 but the source is streamed remotely. Forwards \code{cl_arg} to GDAL verbatim.
+\item \code{\link[=ck_read]{ck_read()}} --- \code{\link[=ck_warp]{ck_warp()}} that returns the result as an R matrix/array
+instead of writing a file, for quick extraction and inspection.
 }
 }
 

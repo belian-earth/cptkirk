@@ -72,14 +72,75 @@
 # Format numbers as gdalwarp CLI tokens without scientific notation.
 .numarg <- function(x) formatC(as.numeric(x), format = "f", digits = 10)
 
-.warp_engine <- function(src, dst, t_srs, te, te_srs, tr, ts, bands,
-                         cl_arg, overview, margin, io, max_bytes,
-                         quiet = TRUE, skip_nosource = FALSE, sanitise = TRUE) {
+# tr is the primary resolution control: if both tr and ts are given, tr wins
+# (ts dropped, with a warning). Returns the resolved ts.
+.resolve_tr_ts <- function(tr, ts, call = rlang::caller_env()) {
+  if (!is.null(tr) && !is.null(ts)) {
+    cli::cli_warn(
+      "Both {.arg tr} and {.arg ts} supplied; using {.arg tr} and ignoring {.arg ts}.",
+      call = call
+    )
+    return(NULL)
+  }
+  ts
+}
+
+# Build the gdalwarp argument vector from the named grid options + cptkirk's
+# performance defaults. `co` may be NULL (e.g. ck_read warps to an uncompressed
+# in-memory target). Assumes tr/ts precedence is already resolved.
+.assemble_warp_args <- function(te, te_srs, tr, ts, r, tap,
+                                num_threads, warp_memory, co, cl_arg) {
+  args <- character(0)
+  if (!is.null(te))     args <- c(args, "-te", .numarg(te))
+  if (!is.null(te_srs)) args <- c(args, "-te_srs", te_srs)
+  if (!is.null(tr))     args <- c(args, "-tr", .numarg(tr))
+  if (!is.null(ts))     args <- c(args, "-ts",
+                                   format(as.integer(round(as.numeric(ts))),
+                                          scientific = FALSE, trim = TRUE))
+  if (!is.null(r))      args <- c(args, "-r", r)
+  # Align output pixels to the tr grid (anchored at the CRS origin) by default,
+  # so outputs at the same resolution share a grid. Only meaningful with tr; an
+  # explicit -tap in cl_arg is left as-is.
+  if (isTRUE(tap) && !is.null(tr) && !any(cl_arg == "-tap")) {
+    args <- c(args, "-tap")
+  }
+  if (!is.null(num_threads) && !any(grepl("NUM_THREADS", cl_arg, fixed = TRUE))) {
+    args <- c(args, "-wo", paste0("NUM_THREADS=", num_threads))
+  }
+  wm <- .resolve_speed(warp_memory, .default_warp_mem)
+  if (!is.null(wm) && !any(cl_arg == "-wm")) {
+    args <- c(args, "-wm", as.character(wm))
+  }
+  if (length(co)) {
+    args <- c(args, as.vector(rbind("-co", co)))
+  }
+  c(args, cl_arg)
+}
+
+# SKIP_NOSOURCE (+ nodata-aware INIT_DEST) warp options, added only when
+# requested and not already present. INIT_DEST depends on the source nodata,
+# which is only known once metadata is read.
+.skip_nosource_args <- function(cl_arg, skip_nosource, nodata) {
+  if (!isTRUE(skip_nosource) || any(grepl("SKIP_NOSOURCE", cl_arg, fixed = TRUE))) {
+    return(character(0))
+  }
+  out <- c("-wo", "SKIP_NOSOURCE=YES")
+  if (!any(grepl("INIT_DEST", cl_arg, fixed = TRUE))) {
+    out <- c(out, "-wo", if (!is.null(nodata)) "INIT_DEST=NO_DATA" else "INIT_DEST=0")
+  }
+  out
+}
+
+# Shared front of the pipeline: sanitise the request, read metadata, plan each
+# source's window, and stream the native bytes. Returns the per-source plans and
+# fetched windows (raw, native dtype) plus the resolved target CRS -- everything
+# the warp / translate / read finalisers need. No staging or GDAL output here.
+.warp_collect <- function(src, t_srs, te, te_srs, tr, ts, bands, cl_arg, dst,
+                          overview, margin, io, max_bytes, sanitise = TRUE) {
   bands0 <- if (is.null(bands)) integer(0) else as.integer(bands)
 
-  # Sanitise (1/2): structural checks on the geometry -- CRS parse, extent,
-  # resolution, output dimensions. These need no source, so they run before the
-  # header read: a malformed request fails with zero remote contact.
+  # Sanitise (1/2): structural checks before the header read -- a malformed
+  # request fails with zero remote contact.
   if (isTRUE(sanitise)) {
     .check_warp_geometry(t_srs = t_srs, te = te, te_srs = te_srs, tr = tr, ts = ts)
   }
@@ -88,15 +149,13 @@
   urls <- if (reuse) src$src else as.character(src)
   metas <- if (reuse) list(cog_meta(src$ptr)) else cog_meta_many(urls)
 
-  # Sanitise (2/2): probe the GDAL options against a tiny synthetic in-memory
-  # raster built from the header metadata (no pixels fetched), catching a bad
-  # resampling method / creation option / driver / unknown flag before the
-  # fetch rather than after a multi-second remote read.
+  # Sanitise (2/2): probe the GDAL options against a synthetic stand-in built
+  # from the header metadata (no pixels fetched), catching a bad resampling
+  # method / creation option / driver / unknown flag before the fetch.
   if (isTRUE(sanitise)) {
     .probe_warp(metas[[1]], t_srs = t_srs, cl_arg = cl_arg, dst = dst)
   }
 
-  # --- plan each tile's window (R/PROJ), then fetch + stage -----------------
   plans <- Map(function(u, mm) {
     .plan_from_meta(u, mm, t_srs = t_srs, te = te, te_srs = te_srs, tr = tr,
                     ts = ts, bands = bands, overview = overview, margin = margin,
@@ -109,12 +168,11 @@
       "i" = "Check {.arg te} (and {.arg te_srs}/{.arg t_srs}) cover the source footprint(s)."
     ))
   }
-  n <- length(plans)
   nodata <- plans[[1]]$nodata
-  if (reuse) {
+  ws <- if (reuse) {
     # single source: fetch from the open handle (no re-open).
     p <- plans[[1]]
-    ws <- list(cog_fetch_window_raw(
+    list(cog_fetch_window_raw(
       src$ptr, level = p$level, xoff = p$xoff, yoff = p$yoff,
       xsize = p$xsize, ysize = p$ysize, bands = bands0,
       fill = nodata %||% 0, io_concurrency = io
@@ -123,50 +181,52 @@
     # One global concurrency budget across all tiles' tile-fetches (object
     # stores throttle past ~16; raise on a fast, stable link).
     g <- function(k) vapply(plans, `[[`, if (k == "src") character(1) else integer(1), k)
-    ws <- cog_fetch_windows_raw(
+    cog_fetch_windows_raw(
       srcs = g("src"), level = g("level"), xoff = g("xoff"), yoff = g("yoff"),
       xsize = g("xsize"), ysize = g("ysize"), bands = bands0,
       fill = nodata %||% 0, io_concurrency = io
     )
   }
+  list(plans = plans, ws = ws, n = length(plans), nodata = nodata,
+       t_srs_warp = t_srs %||% plans[[1]]$crs)
+}
+
+# Stage each fetched window as a /vsimem raw VRT, deferring cleanup to `envir`.
+# Returns the VRT paths.
+.warp_stage <- function(ws, plans, envir) {
   staged <- Map(function(w, p) .stage_vsimem_vrt(w, p$win_gt, p$src_wkt, nodata = p$nodata),
                 ws, plans)
-  on.exit(
+  withr::defer(
     for (f in unlist(lapply(staged, `[[`, "files"))) {
       try(gdalraster::vsi_unlink(f), silent = TRUE)
     },
-    add = TRUE
+    envir = envir
   )
-  vrts <- vapply(staged, `[[`, character(1), "vrt")
-  t_srs_warp <- t_srs %||% plans[[1]]$crs
+  vapply(staged, `[[`, character(1), "vrt")
+}
 
-  # --- copy fast-path (single source, no reprojection/resolution change) ----
-  # The staged window (fetched with zero margin) *is* the answer. translate()
-  # (GDALCreateCopy) writes it straight out -- no warp transformer/resampler,
-  # orientation-agnostic (handles south-up sources). Warp-only flags (-wo, -wm,
-  # -multi, ...) don't affect an identity copy, so only output-format options
-  # (-of/-ot/-co) carry over.
-  if (n == 1L && isTRUE(plans[[1]]$is_copy)) {
+.warp_engine <- function(src, dst, t_srs, te, te_srs, tr, ts, bands,
+                         cl_arg, overview, margin, io, max_bytes,
+                         quiet = TRUE, skip_nosource = FALSE, sanitise = TRUE) {
+  cl <- .warp_collect(src, t_srs = t_srs, te = te, te_srs = te_srs, tr = tr,
+                      ts = ts, bands = bands, cl_arg = cl_arg, dst = dst,
+                      overview = overview, margin = margin, io = io,
+                      max_bytes = max_bytes, sanitise = sanitise)
+  vrts <- .warp_stage(cl$ws, cl$plans, environment())
+
+  # copy fast-path (single source, no reprojection/resolution change): the
+  # staged window *is* the answer; translate() writes it straight out -- no
+  # warp transformer, orientation-agnostic. Warp-only flags don't affect an
+  # identity copy, so only output-format options (-of/-ot/-co) carry over.
+  if (cl$n == 1L && isTRUE(cl$plans[[1]]$is_copy)) {
     if (file.exists(dst)) unlink(dst)
     gdalraster::translate(vrts, dst, cl_arg = .translate_out_args(cl_arg),
                           quiet = quiet)
     return(invisible(dst))
   }
 
-  # --- hand the (mosaic) warp to GDAL ---------------------------------------
-  warp_args <- cl_arg
-  # Skip output chunks with no source coverage (e.g. nodata margins from
-  # reprojection); paired with INIT_DEST so skipped chunks are initialised.
-  # Done here because the right INIT_DEST value depends on the source nodata,
-  # which is only known once metadata is read.
-  if (isTRUE(skip_nosource) && !any(grepl("SKIP_NOSOURCE", cl_arg, fixed = TRUE))) {
-    warp_args <- c(warp_args, "-wo", "SKIP_NOSOURCE=YES")
-    if (!any(grepl("INIT_DEST", cl_arg, fixed = TRUE))) {
-      warp_args <- c(warp_args, "-wo",
-                     if (!is.null(nodata)) "INIT_DEST=NO_DATA" else "INIT_DEST=0")
-    }
-  }
-  gdalraster::warp(src_files = vrts, dst_filename = dst, t_srs = t_srs_warp,
+  warp_args <- c(cl_arg, .skip_nosource_args(cl_arg, skip_nosource, cl$nodata))
+  gdalraster::warp(src_files = vrts, dst_filename = dst, t_srs = cl$t_srs_warp,
                    cl_arg = warp_args, quiet = quiet)
   invisible(dst)
 }

@@ -130,12 +130,7 @@ ck_warp <- function(src, dst,
   rlang::check_bool(skip_nosource)
   .check_fetch_args(overview, margin, io_concurrency, max_bytes, sanitise)
 
-  # tr is the primary resolution control: if both are given, tr wins.
-  if (!is.null(tr) && !is.null(ts)) {
-    cli::cli_warn("Both {.arg tr} and {.arg ts} supplied; using {.arg tr} and ignoring {.arg ts}.")
-    ts <- NULL
-  }
-
+  ts <- .resolve_tr_ts(tr, ts)
   if (!is.null(te)) te <- as.numeric(te)
   io <- io_concurrency %||% 16L
   max_bytes <- max_bytes %||% .default_max_bytes()
@@ -152,31 +147,8 @@ ck_warp <- function(src, dst,
   # Assemble the gdalwarp argument vector from the named options + cptkirk's
   # performance defaults; the engine handles SKIP_NOSOURCE/INIT_DEST (which
   # depend on the source nodata) once metadata is read.
-  args <- character(0)
-  if (!is.null(te))     args <- c(args, "-te", .numarg(te))
-  if (!is.null(te_srs)) args <- c(args, "-te_srs", te_srs)
-  if (!is.null(tr))     args <- c(args, "-tr", .numarg(tr))
-  if (!is.null(ts))     args <- c(args, "-ts",
-                                   format(as.integer(round(as.numeric(ts))),
-                                          scientific = FALSE, trim = TRUE))
-  if (!is.null(r))      args <- c(args, "-r", r)
-  # Align output pixels to the tr grid (anchored at the CRS origin) by default,
-  # so outputs at the same resolution share a grid and stack cleanly. Only
-  # meaningful with tr; an explicit -tap in cl_arg is left as-is.
-  if (isTRUE(tap) && !is.null(tr) && !any(cl_arg == "-tap")) {
-    args <- c(args, "-tap")
-  }
-  if (!is.null(num_threads) && !any(grepl("NUM_THREADS", cl_arg, fixed = TRUE))) {
-    args <- c(args, "-wo", paste0("NUM_THREADS=", num_threads))
-  }
-  wm <- .resolve_speed(warp_memory, .default_warp_mem)
-  if (!is.null(wm) && !any(cl_arg == "-wm")) {
-    args <- c(args, "-wm", as.character(wm))
-  }
-  if (length(co)) {
-    args <- c(args, as.vector(rbind("-co", co)))
-  }
-  args <- c(args, cl_arg)
+  args <- .assemble_warp_args(te, te_srs, tr, ts, r, tap,
+                              num_threads, warp_memory, co, cl_arg)
 
   .warp_engine(src, dst, t_srs = t_srs, te = te, te_srs = te_srs, tr = tr,
                ts = ts, bands = bands, cl_arg = args, overview = overview,

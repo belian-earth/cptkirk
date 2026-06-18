@@ -27,6 +27,7 @@ reference:
   contents:
   - ck_warp
   - warp_remote
+  - ck_read
 - title: Inspection
   desc: |
     Read a source's structure and georeferencing, or open it once and reuse the handle across calls.
