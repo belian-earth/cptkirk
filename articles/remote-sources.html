@@ -141,10 +141,20 @@ so it is a cheap way to understand a file before fetching anything.</p>
 <div class="section level2">
 <h2 id="authentication-comes-from-the-environment">Authentication comes from the environment<a class="anchor" aria-label="anchor" href="#authentication-comes-from-the-environment"></a>
 </h2>
-<p>cptkirk never takes credentials as arguments; it reads the standard
-environment variables that <code>object_store</code> documents, so
-secrets stay out of your scripts. Mapping from the <code>obstore</code>
-store object:</p>
+<p>cptkirk never takes credentials as arguments; it reads them from the
+environment, so secrets stay out of your scripts. It honours the
+<strong>same variables as GDAL’s <code>/vsi*</code> drivers</strong>, so
+a setup that already works with GDAL needs no change:
+<code>AWS_ACCESS_KEY_ID</code> / <code>AWS_SECRET_ACCESS_KEY</code> /
+<code>AWS_REGION</code>, <code>AWS_NO_SIGN_REQUEST=YES</code> for public
+buckets, <code>AWS_S3_ENDPOINT</code> for a custom endpoint,
+<code>GOOGLE_APPLICATION_CREDENTIALS</code>,
+<code>AZURE_STORAGE_ACCOUNT</code>, and so on. The object_store-native
+spellings (<code>AWS_SKIP_SIGNATURE</code>, …) work too; where the two
+differ, cptkirk translates the GDAL name. Only non-secret knobs are
+translated R-side – credentials pass straight from the environment to
+the reader.</p>
+<p>Mapping from the <code>obstore</code> store object:</p>
 <table class="table">
 <colgroup>
 <col width="50%">
@@ -157,7 +167,9 @@ store object:</p>
 <tbody>
 <tr class="odd">
 <td><code>S3Store("bucket", region = "us-west-2", skip_signature = True)</code></td>
-<td><code>Sys.setenv(AWS_REGION = "us-west-2", AWS_SKIP_SIGNATURE = "true")</code></td>
+<td>
+<code>Sys.setenv(AWS_REGION = "us-west-2", AWS_SKIP_SIGNATURE = "true")</code>
+(or GDAL’s <code>AWS_NO_SIGN_REQUEST = "YES"</code>)</td>
 </tr>
 <tr class="even">
 <td><code>path = "key/within/bucket"</code></td>
@@ -204,10 +216,10 @@ switch signing off and set the region:</li>
 <span><span class="co">#&gt; <span style="color: #00BB00;">band names</span>: <span style="color: #0000BB;">"band_01"</span>, <span style="color: #0000BB;">"band_02"</span>, and <span style="color: #0000BB;">"band_03"</span></span></span></code></pre></div>
 <p>The selection is by <strong>host</strong>, not scheme: a
 <code>*.amazonaws.com</code> URL is treated as S3 even over
-<code>https</code>, so it still needs <code>AWS_SKIP_SIGNATURE</code>
-here. Use <code>"true"</code> / <code>"false"</code> for that variable
-(object_store parses booleans that way — GDAL’s
-<code>YES</code>/<code>NO</code> is not understood at this layer).</p>
+<code>https</code>, so it still needs the no-sign flag here. Either
+spelling works — <code>AWS_SKIP_SIGNATURE = "true"</code> (object_store)
+or <code>AWS_NO_SIGN_REQUEST = "YES"</code> (GDAL); cptkirk normalises
+the GDAL <code>YES</code>/<code>NO</code> form for you.</p>
 </div>
 <div class="section level2">
 <h2 id="reading-a-window-into-r">Reading a window into R<a class="anchor" aria-label="anchor" href="#reading-a-window-into-r"></a>
