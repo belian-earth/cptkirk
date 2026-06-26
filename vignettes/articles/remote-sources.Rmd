@@ -49,13 +49,22 @@ way to understand a file before fetching anything.
 
 ## Authentication comes from the environment
 
-cptkirk never takes credentials as arguments; it reads the standard environment
-variables that `object_store` documents, so secrets stay out of your scripts.
+cptkirk never takes credentials as arguments; it reads them from the
+environment, so secrets stay out of your scripts. It honours the **same
+variables as GDAL's `/vsi*` drivers**, so a setup that already works with GDAL
+needs no change: `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION`,
+`AWS_NO_SIGN_REQUEST=YES` for public buckets, `AWS_S3_ENDPOINT` for a custom
+endpoint, `GOOGLE_APPLICATION_CREDENTIALS`, `AZURE_STORAGE_ACCOUNT`, and so on.
+The object_store-native spellings (`AWS_SKIP_SIGNATURE`, ...) work too; where the
+two differ, cptkirk translates the GDAL name. Only non-secret knobs are
+translated R-side -- credentials pass straight from the environment to the
+reader.
+
 Mapping from the `obstore` store object:
 
 | `obstore` | cptkirk |
 |---|---|
-| `S3Store("bucket", region = "us-west-2", skip_signature = True)` | `Sys.setenv(AWS_REGION = "us-west-2", AWS_SKIP_SIGNATURE = "true")` |
+| `S3Store("bucket", region = "us-west-2", skip_signature = True)` | `Sys.setenv(AWS_REGION = "us-west-2", AWS_SKIP_SIGNATURE = "true")` (or GDAL's `AWS_NO_SIGN_REQUEST = "YES"`) |
 | `path = "key/within/bucket"` | fold into the URL: `s3://bucket/key/within/bucket` |
 | `GeoTIFF.open(path, store = store)` | `cog_info(url)` / `ck_read(url)` / `ck_warp(url, dst)` |
 
@@ -78,9 +87,10 @@ cog_info(paste0(scene, "TCI.tif"))
 ```
 
 The selection is by **host**, not scheme: a `*.amazonaws.com` URL is treated as
-S3 even over `https`, so it still needs `AWS_SKIP_SIGNATURE` here. Use `"true"`
-/ `"false"` for that variable (object_store parses booleans that way --- GDAL's
-`YES`/`NO` is not understood at this layer).
+S3 even over `https`, so it still needs the no-sign flag here. Either spelling
+works --- `AWS_SKIP_SIGNATURE = "true"` (object_store) or
+`AWS_NO_SIGN_REQUEST = "YES"` (GDAL); cptkirk normalises the GDAL `YES`/`NO` form
+for you.
 
 ## Reading a window into R
 

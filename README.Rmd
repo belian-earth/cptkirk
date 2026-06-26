@@ -122,11 +122,24 @@ once.
 ## Authentication
 
 Remote object-store sources (`s3://`, `gs://`, `az://`) authenticate from the
-**process environment**, using the variable names `object_store` documents
-(`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION`,
-`GOOGLE_SERVICE_ACCOUNT`, `AZURE_STORAGE_ACCOUNT_NAME`, ...). Credentials never
-pass through R. For public buckets set `AWS_SKIP_SIGNATURE=true`, or just use the
-`https://` URL.
+**process environment** -- and `cptkirk` reads the **same variables as GDAL's
+`/vsi*` drivers**, so an existing GDAL setup is a drop-in:
+
+| Provider | Set (GDAL names work as-is) |
+|---|---|
+| AWS S3 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION` |
+| AWS, public bucket | `AWS_NO_SIGN_REQUEST=YES` (set `AWS_REGION` too) |
+| AWS, custom endpoint | `AWS_S3_ENDPOINT`, `AWS_HTTPS`, `AWS_VIRTUAL_HOSTING`, `AWS_REQUEST_PAYER` |
+| Google Cloud | `GOOGLE_APPLICATION_CREDENTIALS` (service-account JSON) |
+| Azure Blob | `AZURE_STORAGE_ACCOUNT` + `AZURE_STORAGE_ACCESS_KEY` (or a SAS token) |
+
+Most names are shared with `object_store` and forward verbatim; the handful that
+differ (`AWS_S3_ENDPOINT`, `AWS_NO_SIGN_REQUEST`, the Azure account name, ...) are
+translated for you. Settings are read from the environment or from
+`gdalraster::set_config_option()`. **No credential ever passes through R** -- only
+the non-secret knobs (endpoints, no-sign flags) are translated R-side; secrets go
+straight from the environment into the reader. With no static credentials the
+usual chain (web-identity, ECS, EC2 instance metadata) still applies.
 
 ## How it picks what to fetch
 

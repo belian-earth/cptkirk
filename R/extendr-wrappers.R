@@ -8,7 +8,7 @@ NULL
 #' Open a source (local path, http(s)://, s3://, gs://, az://). Returns an
 #' external pointer reused by `cog_meta()` / `cog_fetch_window()`.
 #' @noRd
-cog_open <- function(src) .Call(wrap__cog_open, src)
+cog_open <- function(src, opt_keys, opt_vals) .Call(wrap__cog_open, src, opt_keys, opt_vals)
 
 #' Structural + georeferencing metadata for an open source.
 #' @noRd
@@ -21,7 +21,7 @@ cog_meta <- function(h) .Call(wrap__cog_meta, h)
 #' source, in order. Used to plan a multi-tile mosaic without paying the opens
 #' sequentially.
 #' @noRd
-cog_meta_many <- function(srcs) .Call(wrap__cog_meta_many, srcs)
+cog_meta_many <- function(srcs, opt_keys, opt_vals) .Call(wrap__cog_meta_many, srcs, opt_keys, opt_vals)
 
 #' Fetch a pixel window of an overview level from an open source. `level` is
 #' 1-based (1 = full resolution); `bands` is 1-based (empty = all). Returns a
@@ -46,6 +46,6 @@ cog_fetch_window_raw <- function(h, level, xoff, yoff, xsize, ysize, bands, fill
 #' within a single runtime, so the tiles' network reads overlap. Returns a
 #' list with one element per tile, each as in `cog_fetch_window_raw`.
 #' @noRd
-cog_fetch_windows_raw <- function(srcs, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency) .Call(wrap__cog_fetch_windows_raw, srcs, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency)
+cog_fetch_windows_raw <- function(srcs, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency, opt_keys, opt_vals) .Call(wrap__cog_fetch_windows_raw, srcs, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency, opt_keys, opt_vals)
 
 # nolint end

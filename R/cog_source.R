@@ -24,7 +24,8 @@ cog_source <- function(src) {
   if (!rlang::is_string(src)) {
     cli::cli_abort("{.arg src} must be a single path or URL string.")
   }
-  structure(list(ptr = cog_open(src), src = src), class = "cog_source")
+  kv <- .auth_kv()
+  structure(list(ptr = cog_open(src, kv$keys, kv$vals), src = src), class = "cog_source")
 }
 
 #' @export

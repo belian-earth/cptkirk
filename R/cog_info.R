@@ -29,7 +29,8 @@ cog_info <- function(src, as.data.frame = FALSE) {
   rlang::check_bool(as.data.frame)
 
   res <- if (is.character(src) && length(src) > 1L) {
-    metas <- cog_meta_many(src)
+    kv <- .auth_kv()
+    metas <- cog_meta_many(src, kv$keys, kv$vals)
     items <- Map(function(s, m) {
       m$src <- s
       structure(m, class = c("cog_info", "list"))
