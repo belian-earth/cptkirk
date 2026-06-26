@@ -28,8 +28,8 @@ pub(crate) struct OpenTiff {
     pub tiff: TIFF,
 }
 
-pub(crate) async fn open_tiff(src: &str) -> Result<OpenTiff> {
-    let (store, path) = parse_src(src)?;
+pub(crate) async fn open_tiff(src: &str, opts: &[(String, String)]) -> Result<OpenTiff> {
+    let (store, path) = parse_src(src, opts)?;
     let reader = ObjectReader::new(store, path);
     let cache = ReadaheadMetadataCache::new(reader.clone());
     let mut meta = TiffMetadataReader::try_open(&cache).await?;

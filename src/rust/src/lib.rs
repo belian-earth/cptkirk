@@ -17,6 +17,13 @@ fn default_io_concurrency() -> usize {
     num_cpus::get().clamp(8, 16)
 }
 
+/// Pair parallel key/value vectors (the object_store options the R layer
+/// translated from GDAL-style settings) into the form `parse_src` expects.
+/// Length-mismatched tails are dropped by `zip`.
+fn zip_opts(keys: Vec<String>, vals: Vec<String>) -> Vec<(String, String)> {
+    keys.into_iter().zip(vals).collect()
+}
+
 /// A handle to a remote GeoTIFF / COG.
 ///
 /// Opens the source once (header + all IFDs over a remote-capable reader) and
@@ -31,9 +38,10 @@ struct CogSource {
 /// external pointer reused by `cog_meta()` / `cog_fetch_window()`.
 /// @noRd
 #[extendr]
-fn cog_open(src: &str) -> extendr_api::Result<Robj> {
+fn cog_open(src: &str, opt_keys: Vec<String>, opt_vals: Vec<String>) -> extendr_api::Result<Robj> {
     let rt = runtime::shared_runtime().map_err(to_r)?;
-    let open = rt.block_on(window::open_tiff(src)).map_err(to_r)?;
+    let opts = zip_opts(opt_keys, opt_vals);
+    let open = rt.block_on(window::open_tiff(src, &opts)).map_err(to_r)?;
     Ok(ExternalPtr::new(CogSource { open }).into())
 }
 
@@ -150,11 +158,16 @@ fn cog_fetch_window_raw(
 /// sequentially.
 /// @noRd
 #[extendr]
-fn cog_meta_many(srcs: Vec<String>) -> extendr_api::Result<Robj> {
+fn cog_meta_many(
+    srcs: Vec<String>,
+    opt_keys: Vec<String>,
+    opt_vals: Vec<String>,
+) -> extendr_api::Result<Robj> {
     let rt = runtime::shared_runtime().map_err(to_r)?;
+    let opts = zip_opts(opt_keys, opt_vals);
     let opens = rt
         .block_on(async {
-            futures::future::try_join_all(srcs.iter().map(|s| window::open_tiff(s))).await
+            futures::future::try_join_all(srcs.iter().map(|s| window::open_tiff(s, &opts))).await
         })
         .map_err(to_r)?;
     let metas: Vec<Robj> = opens
@@ -185,8 +198,11 @@ fn cog_fetch_windows_raw(
     bands: Vec<i32>,
     fill: f64,
     io_concurrency: Nullable<i32>,
+    opt_keys: Vec<String>,
+    opt_vals: Vec<String>,
 ) -> extendr_api::Result<Robj> {
     let rt = runtime::shared_runtime().map_err(to_r)?;
+    let opts = zip_opts(opt_keys, opt_vals);
     let io = match io_concurrency {
         Nullable::NotNull(v) if v > 0 => v as usize,
         _ => default_io_concurrency(),
@@ -208,7 +224,8 @@ fn cog_fetch_windows_raw(
     let windows = rt
         .block_on(async {
             let opens =
-                futures::future::try_join_all(srcs.iter().map(|s| window::open_tiff(s))).await?;
+                futures::future::try_join_all(srcs.iter().map(|s| window::open_tiff(s, &opts)))
+                    .await?;
             window::fetch_windows_pooled(&opens, &reqs, &bands0, fill, io).await
         })
         .map_err(to_r)?;

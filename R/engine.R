@@ -147,7 +147,10 @@
 
   reuse <- inherits(src, "cog_source")
   urls <- if (reuse) src$src else as.character(src)
-  metas <- if (reuse) list(cog_meta(src$ptr)) else cog_meta_many(urls)
+  # Translate GDAL-style auth env/config to object_store options once; a reused
+  # cog_source already applied them when it was opened.
+  kv <- .auth_kv()
+  metas <- if (reuse) list(cog_meta(src$ptr)) else cog_meta_many(urls, kv$keys, kv$vals)
 
   # Sanitise (2/2): probe the GDAL options against a synthetic stand-in built
   # from the header metadata (no pixels fetched), catching a bad resampling
@@ -184,7 +187,7 @@
     cog_fetch_windows_raw(
       srcs = g("src"), level = g("level"), xoff = g("xoff"), yoff = g("yoff"),
       xsize = g("xsize"), ysize = g("ysize"), bands = bands0,
-      fill = nodata %||% 0, io_concurrency = io
+      fill = nodata %||% 0, io_concurrency = io, opt_keys = kv$keys, opt_vals = kv$vals
     )
   }
   list(plans = plans, ws = ws, n = length(plans), nodata = nodata,
