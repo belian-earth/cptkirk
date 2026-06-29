@@ -15,8 +15,13 @@ path = 'document.rs'
 
 [dependencies]
 extendr-api = '0.9.0'
-async-tiff = { version = '0.3', default-features = false, features = ['object_store', 'reqwest', 'tokio'] }
+async-tiff = { version = '0.3', default-features = false, features = ['object_store', 'tokio'] }
 object_store = { version = '0.13', features = ['aws', 'gcp', 'azure', 'http'] }
+# Raw-HTTP range reader for pre-signed URLs (see http_reader.rs). Pinned to the
+# same reqwest 0.12 + ring/rustls stack object_store already uses, so no second
+# TLS backend (reqwest 0.13's rustls would drag in aws-lc-rs + cmake).
+reqwest = { version = '0.12', default-features = false, features = ['rustls-tls', 'http2'] }
+async-trait = '0.1'
 tokio = { version = '1', features = ['rt-multi-thread', 'sync', 'macros'] }
 futures = '0.3'
 bytes = '1'

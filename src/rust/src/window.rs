@@ -15,22 +15,21 @@ use std::sync::Arc;
 use async_tiff::decoder::DecoderRegistry;
 use async_tiff::metadata::cache::ReadaheadMetadataCache;
 use async_tiff::metadata::TiffMetadataReader;
-use async_tiff::reader::{AsyncFileReader, ObjectReader};
+use async_tiff::reader::AsyncFileReader;
 use async_tiff::tags::PlanarConfiguration;
 use async_tiff::{TypedArray, TIFF};
 use futures::stream::{self, StreamExt, TryStreamExt};
 
 use crate::error::{KirkError, Result};
-use crate::source::parse_src;
+use crate::source::open_reader;
 
 pub(crate) struct OpenTiff {
-    pub reader: ObjectReader,
+    pub reader: Arc<dyn AsyncFileReader>,
     pub tiff: TIFF,
 }
 
 pub(crate) async fn open_tiff(src: &str, opts: &[(String, String)]) -> Result<OpenTiff> {
-    let (store, path) = parse_src(src, opts)?;
-    let reader = ObjectReader::new(store, path);
+    let reader = open_reader(src, opts)?;
     let cache = ReadaheadMetadataCache::new(reader.clone());
     let mut meta = TiffMetadataReader::try_open(&cache).await?;
     let ifds = meta.read_all_ifds(&cache).await?;
@@ -483,7 +482,7 @@ pub(crate) struct WindowReq {
 /// Per-tile fetch plan: everything needed to fetch + blit its COG tiles,
 /// resolved once (no I/O beyond what `open_tiff` already did).
 struct TilePlan {
-    reader: ObjectReader,
+    reader: Arc<dyn AsyncFileReader>,
     ifd: Arc<async_tiff::ImageFileDirectory>,
     planar: PlanarConfiguration,
     total_bands: usize,

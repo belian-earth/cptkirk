@@ -7,10 +7,69 @@
 
 use std::sync::Arc;
 
+use async_tiff::reader::{AsyncFileReader, ObjectReader};
 use object_store::path::Path as ObjPath;
 use object_store::ObjectStore;
 
 use crate::error::{KirkError, Result};
+use crate::http_reader::SignedHttpReader;
+
+/// Resolve a source string to the reader the windowing engine streams from.
+///
+/// A pre-signed HTTP(S) URL (credential in the query string) is read with
+/// [`SignedHttpReader`], which preserves the query that object_store's
+/// `HttpStore` would otherwise drop (see [`is_presigned_http`]). Everything else
+/// -- local paths, native `s3://`/`gs://`/`az://`, plain public https, and Azure
+/// SAS URLs (handled in [`parse_src`] via `azure_storage_sas_key`) -- goes
+/// through object_store via an [`ObjectReader`].
+pub(crate) fn open_reader(
+    src: &str,
+    extra_opts: &[(String, String)],
+) -> Result<Arc<dyn AsyncFileReader>> {
+    if let Ok(url) = url::Url::parse(src) {
+        if is_presigned_http(&url) {
+            let reader = SignedHttpReader::new(url)
+                .map_err(|e| KirkError::Invalid(format!("signed http reader: {e}")))?;
+            return Ok(Arc::new(reader));
+        }
+    }
+    let (store, path) = parse_src(src, extra_opts)?;
+    Ok(Arc::new(ObjectReader::new(store, path)))
+}
+
+/// True if `url` is a pre-signed HTTP(S) URL whose credential rides in the query
+/// string, which object_store's generic `HttpStore` would silently drop.
+///
+/// Azure SAS blob/dfs URLs are deliberately excluded: they are read through
+/// object_store's native Azure store via the `azure_storage_sas_key` injection
+/// in [`parse_src`], and their signature parameter is `sig` (not matched here).
+fn is_presigned_http(url: &url::Url) -> bool {
+    if !matches!(url.scheme(), "http" | "https") {
+        return false;
+    }
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    if host.ends_with(".blob.core.windows.net") || host.ends_with(".dfs.core.windows.net") {
+        return false;
+    }
+    let Some(query) = url.query() else {
+        return false;
+    };
+    // S3 V2 / Huawei OBS sign with AccessKeyId + Signature; S3 V4 (AWS, MinIO,
+    // ...) with X-Amz-Signature; GCS V4 signed URLs with X-Goog-Signature.
+    let v2 = has_query_key(query, "AccessKeyId") && has_query_key(query, "Signature");
+    let v4 = has_query_key(query, "X-Amz-Signature") || has_query_key(query, "X-Goog-Signature");
+    v2 || v4
+}
+
+/// Case-insensitive check for a `name=...` pair in a raw URL query string.
+fn has_query_key(query: &str, name: &str) -> bool {
+    query.split('&').any(|kv| {
+        let key = kv.split('=').next().unwrap_or("");
+        key.eq_ignore_ascii_case(name)
+    })
+}
 
 pub(crate) fn parse_src(
     src: &str,
@@ -170,6 +229,45 @@ mod tests {
         assert!(azure_sas_opt(&parse("https://evil.com/blob.core.windows.net?sig=zzz")).is_none());
     }
 
+    #[test]
+    fn detects_presigned_obs_s3v2() {
+        // Huawei OBS / S3 V2: AccessKeyId + Expires + Signature in the query.
+        let url = parse(
+            "https://bucket.obs.cn-south-222.ai.pcl.cn:443/path/file.tif\
+             ?AccessKeyId=AK123&Expires=1782746226&Signature=abc%3D",
+        );
+        assert!(is_presigned_http(&url));
+    }
+
+    #[test]
+    fn detects_presigned_s3v4_and_gcs() {
+        assert!(is_presigned_http(&parse(
+            "https://bucket.s3.amazonaws.com/key.tif?X-Amz-Signature=deadbeef&X-Amz-Expires=3600"
+        )));
+        assert!(is_presigned_http(&parse(
+            "https://storage.googleapis.com/bucket/key.tif?X-Goog-Signature=deadbeef"
+        )));
+    }
+
+    #[test]
+    fn presigned_http_ignores_unsigned_and_native() {
+        // Plain public COG, no query.
+        assert!(!is_presigned_http(&parse(
+            "https://data.source.coop/org/dataset/file.tif"
+        )));
+        // S3-style host but no signature in the query.
+        assert!(!is_presigned_http(&parse(
+            "https://bucket.s3.amazonaws.com/key.tif?versionId=42"
+        )));
+        // Native schemes are never routed through the raw-HTTP reader.
+        assert!(!is_presigned_http(&parse("s3://bucket/key.tif")));
+        assert!(!is_presigned_http(&parse("az://container/key.tif")));
+        // Azure SAS stays on the native Azure (object_store) pathway.
+        assert!(!is_presigned_http(&parse(
+            "https://acct.blob.core.windows.net/cont/file.tif?sp=r&sig=zzz"
+        )));
+    }
+
     /// End-to-end read of a real MPC-signed COG. Ignored by default: it needs
     /// network and a *fresh* signed URL (SAS tokens expire), supplied via the
     /// `CPTKIRK_TEST_AZURE_SAS_URL` env var. Obtain one from the Planetary
@@ -191,6 +289,30 @@ mod tests {
             crate::window::fetch_window(&open, 0, 0, 0, 16, 16, &[], f64::NAN, 4).await
         });
         let win = win.expect("signed COG window should read");
+        assert_eq!(win.xsize, 16);
+        assert_eq!(win.ysize, 16);
+        assert!(win.n_bands >= 1);
+    }
+
+    /// End-to-end read of a real pre-signed Huawei OBS COG via the raw-HTTP
+    /// reader. Ignored by default: needs network and a *fresh* signed URL
+    /// (OBS signatures expire), supplied via `CPTKIRK_TEST_OBS_SIGNED_URL`.
+    /// Obtain one in R via iearthdata:
+    ///   `esd_query(bbox, years = 2024, signed = TRUE)$url` (vsicurl = FALSE).
+    /// Run with:
+    ///   CPTKIRK_TEST_OBS_SIGNED_URL='https://...obs...?AccessKeyId=...&Signature=...' \
+    ///     cargo test --manifest-path src/rust/Cargo.toml -- --ignored obs_signed
+    #[test]
+    #[ignore = "network + fresh signed URL via CPTKIRK_TEST_OBS_SIGNED_URL"]
+    fn obs_signed_window_reads() {
+        let src = std::env::var("CPTKIRK_TEST_OBS_SIGNED_URL")
+            .expect("set CPTKIRK_TEST_OBS_SIGNED_URL to a fresh signed OBS COG URL");
+        let rt = crate::runtime::shared_runtime().unwrap();
+        let win = rt.block_on(async {
+            let open = crate::window::open_tiff(&src, &[]).await?;
+            crate::window::fetch_window(&open, 0, 0, 0, 16, 16, &[], f64::NAN, 4).await
+        });
+        let win = win.expect("signed OBS COG window should read");
         assert_eq!(win.xsize, 16);
         assert_eq!(win.ysize, 16);
         assert!(win.n_bands >= 1);

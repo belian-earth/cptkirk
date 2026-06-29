@@ -2,6 +2,7 @@ use extendr_api::prelude::*;
 
 mod band_fetch;
 mod error;
+mod http_reader;
 mod meta;
 mod runtime;
 mod source;
