@@ -70,3 +70,24 @@ test_that("ck_batch errors on a malformed src", {
   expect_error(ck_batch(c("a.tif", "b.tif")), "list of character")
   expect_error(ck_batch(list(1:3)), "list of character")
 })
+
+test_that("ck_batch accepts a per-band list r matching src", {
+  dir <- withr::local_tempdir()
+  src <- make_groups(dir)                    # 2 groups x 2 bands
+  m <- cog_info(src[[1]][1]); gt <- m$geotransform
+  te <- c(gt[1], gt[4] + 32 * gt[6], gt[1] + 32 * gt[2], gt[4])
+  out <- ck_batch(src, dst = file.path(dir, "o.tif"), stack = TRUE,
+                  te = te, tr = c(40, 40),
+                  r = list(c("near", "bilinear"), c("average", "near")))
+  expect_named(out, c("t1", "t2"))
+  expect_equal(raster_dim(out[["t1"]])[3], 2L)
+})
+
+test_that("ck_batch rejects a mis-shaped list r", {
+  dir <- withr::local_tempdir()
+  src <- make_groups(dir)
+  expect_error(
+    ck_batch(src, r = list(c("near"), c("near", "near"))),
+    "match the structure"
+  )
+})

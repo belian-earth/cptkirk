@@ -25,6 +25,10 @@
 #'   inner vector names) are used to name outputs; see `dst`.
 #' @param stack Logical. `FALSE` (default) writes one file per band; `TRUE`
 #'   stacks each group's bands into one file.
+#' @param r Resampling method (used only on the warp path). Either a single
+#'   method for the whole batch, a flat vector of length equal to the total
+#'   number of assets, or a list mirroring `src` for a per-band method (e.g.
+#'   `"near"` for mask bands, `"bilinear"` for reflectance).
 #' @param dst Output location. Either an explicit path structure matching the
 #'   output (a list of character vectors when `stack = FALSE`, a character vector
 #'   of length `length(src)` when `stack = TRUE`), **or** a single string used as
@@ -59,11 +63,12 @@ ck_batch <- function(src, dst = fs::file_temp(ext = "tif"), stack = FALSE,
     ))
   }
   rlang::check_bool(stack)
-  r <- rlang::arg_match(r)
-  args <- .stack_validate(t_srs, te, te_srs, tr, ts, tap, r, bands, cl_arg,
+  r_flat <- .resolve_per_src_r(r, src)            # one method per asset
+  args <- .stack_validate(t_srs, te, te_srs, tr, ts, tap, r_flat[1], bands, cl_arg,
                           num_threads, warp_memory, cache_max, co, config,
                           skip_nosource, overview, margin, io_concurrency,
                           max_bytes, sanitise, band_names = NULL)
+  cl_base <- .strip_cl_arg(args$cl, "-r")         # per-source -r injected below
   dst_paths <- .resolve_batch_dst(dst, src, stack)
 
   .local_gdal_speed(
@@ -75,23 +80,24 @@ ck_batch <- function(src, dst = fs::file_temp(ext = "tif"), stack = FALSE,
   # ONE pooled fetch across every asset in every group -- the saturation lever.
   all_urls <- unlist(src, use.names = FALSE)
   cl <- .warp_collect(all_urls, t_srs = t_srs, te = te, te_srs = te_srs,
-                      tr = args$tr, ts = args$ts, bands = bands, cl_arg = args$cl,
+                      tr = args$tr, ts = args$ts, bands = bands, cl_arg = cl_base,
                       dst = "/vsimem/ckbatch_probe.tif", overview = overview,
                       margin = margin, io = args$io, max_bytes = args$max_bytes,
                       sanitise = sanitise)
-  # Map fetched windows back to their source URL (non-overlapping sources were
-  # dropped during planning and are simply absent from the lookup).
+  # Map fetched windows (and per-asset resampling) back to their source URL;
+  # non-overlapping sources were dropped during planning and are absent here.
   keys <- vapply(cl$plans, `[[`, character(1), "src")
   plan_by <- stats::setNames(cl$plans, keys)
   ws_by <- stats::setNames(cl$ws, keys)
+  r_by <- stats::setNames(r_flat, all_urls)
 
   assemble1 <- function(urls, dst1) {
     keep <- urls[urls %in% keys]
     if (!length(keep)) return(NA_character_)
-    .stack_assemble(ws_by[keep], plan_by[keep], dst1, cl_arg = args$cl,
+    .stack_assemble(ws_by[keep], plan_by[keep], dst1, cl_arg = cl_base,
                     t_srs_warp = cl$t_srs_warp, nodata = cl$nodata,
                     band_names = NULL, skip_nosource = skip_nosource,
-                    envir = environment())
+                    envir = environment(), r_each = unname(r_by[keep]))
   }
 
   if (stack) {
@@ -103,6 +109,19 @@ ck_batch <- function(src, dst = fs::file_temp(ext = "tif"), stack = FALSE,
       vapply(seq_along(urls), function(j) assemble1(urls[j], ds[[j]]), character(1))
     }, src, dst_paths)
   }
+}
+
+# Resolve `r` to one resampling method per asset (flatten order of `src`).
+# Accepts a single method (recycled), a flat vector of length == total assets,
+# or a list mirroring `src` (per-band). Validated against the allowed methods.
+.resolve_per_src_r <- function(r, src) {
+  if (is.list(r)) {
+    if (length(r) != length(src) || !all(lengths(r) == lengths(src))) {
+      cli::cli_abort("List {.arg r} must match the structure of {.arg src} (same group and band lengths).")
+    }
+    return(.check_r_methods(unlist(r, use.names = FALSE)))
+  }
+  .resolve_resampling(r, length(unlist(src)))
 }
 
 # Resolve `dst` to a path structure matching the requested output: a character

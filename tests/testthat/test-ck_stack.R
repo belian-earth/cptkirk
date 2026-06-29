@@ -78,6 +78,27 @@ test_that("ck_stack_read returns a stacked [ny, nx, nband] array", {
   expect_length(attr(a, "geotransform"), 6L)
 })
 
+test_that("ck_stack applies a per-source resampling method on the warp path", {
+  dir <- withr::local_tempdir()
+  ramp <- gen_tif(file.path(dir, "ramp.tif"), nbands = 1L)  # varying values
+  dst <- file.path(dir, "r.tif")
+  m <- cog_info(ramp); gt <- m$geotransform
+  te <- c(gt[1], gt[4] + 128 * gt[6], gt[1] + 128 * gt[2], gt[4])
+  # same source twice, different resampling, coarsened -> the bands must differ
+  ck_stack(c(ramp, ramp), dst, te = te, tr = c(40, 40), r = c("near", "average"))
+  expect_equal(raster_dim(dst)[3], 2L)
+  expect_false(isTRUE(all.equal(read_band(dst, 1), read_band(dst, 2))))
+})
+
+test_that("ck_stack rejects a resampling vector of the wrong length", {
+  dir <- withr::local_tempdir()
+  s <- const_tif(file.path(dir, "s.tif"), 1)
+  expect_error(
+    ck_stack(c(s, s), file.path(dir, "o.tif"), r = c("near", "bilinear", "cubic")),
+    "one per source"
+  )
+})
+
 test_that("ck_stack warps each source to a common grid when t_srs is given", {
   dir <- withr::local_tempdir()
   srcs <- vapply(1:2, function(i)

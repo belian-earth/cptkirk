@@ -22,6 +22,10 @@
 #'   bands register exactly.
 #'
 #' @inheritParams ck_warp
+#' @param r Resampling method (used only on the warp path; a native-window copy
+#'   ignores it). Either a single method applied to every source, or a vector of
+#'   length `length(src)` giving a per-source method (e.g. `"near"` for a mask
+#'   band, `"bilinear"` for reflectance).
 #' @param band_names Optional character vector naming the output bands, length
 #'   equal to the total number of output bands (sum of selected bands across
 #'   sources). `NULL` (default) derives a name per band from the source file
@@ -52,8 +56,8 @@ ck_stack <- function(src, dst,
   if (!rlang::is_string(dst)) {
     cli::cli_abort("{.arg dst} must be a single output path string.")
   }
-  r <- rlang::arg_match(r)
-  args <- .stack_validate(t_srs, te, te_srs, tr, ts, tap, r, bands, cl_arg,
+  r_each <- .resolve_resampling(r, length(src))
+  args <- .stack_validate(t_srs, te, te_srs, tr, ts, tap, r_each[1], bands, cl_arg,
                           num_threads, warp_memory, cache_max, co, config,
                           skip_nosource, overview, margin, io_concurrency,
                           max_bytes, sanitise, band_names)
@@ -64,7 +68,8 @@ ck_stack <- function(src, dst,
     .envir = environment()
   )
   .stack_engine(src, dst, t_srs = t_srs, te = te, te_srs = te_srs, tr = args$tr,
-                ts = args$ts, bands = bands, cl_arg = args$cl, band_names = band_names,
+                ts = args$ts, bands = bands, cl_arg = .strip_cl_arg(args$cl, "-r"),
+                r_each = r_each, band_names = band_names,
                 overview = overview, margin = margin, io = args$io,
                 max_bytes = args$max_bytes, skip_nosource = skip_nosource,
                 sanitise = sanitise)
@@ -98,8 +103,8 @@ ck_stack_read <- function(src,
                           io_concurrency = 16L, max_bytes = NULL, sanitise = TRUE) {
   rlang::check_required(src)
   .check_src(src)
-  r <- rlang::arg_match(r)
-  args <- .stack_validate(t_srs, te, te_srs, tr, ts, tap, r, bands, cl_arg,
+  r_each <- .resolve_resampling(r, length(src))
+  args <- .stack_validate(t_srs, te, te_srs, tr, ts, tap, r_each[1], bands, cl_arg,
                           num_threads, warp_memory, cache_max, co = NULL, config,
                           skip_nosource, overview, margin, io_concurrency,
                           max_bytes, sanitise, band_names = NULL)
@@ -112,7 +117,8 @@ ck_stack_read <- function(src,
   out <- sprintf("/vsimem/%s.tif", basename(tempfile("ckstackrd_")))
   withr::defer(try(gdalraster::vsi_unlink(out), silent = TRUE))
   .stack_engine(src, out, t_srs = t_srs, te = te, te_srs = te_srs, tr = args$tr,
-                ts = args$ts, bands = bands, cl_arg = args$cl, band_names = NULL,
+                ts = args$ts, bands = bands, cl_arg = .strip_cl_arg(args$cl, "-r"),
+                r_each = r_each, band_names = NULL,
                 overview = overview, margin = margin, io = args$io,
                 max_bytes = args$max_bytes, skip_nosource = skip_nosource,
                 sanitise = sanitise)
@@ -156,7 +162,7 @@ ck_stack_read <- function(src,
 # Fetch (pooled) one group of sources, then assemble them into `dst`.
 .stack_engine <- function(src, dst, t_srs, te, te_srs, tr, ts, bands, cl_arg,
                           band_names, overview, margin, io, max_bytes,
-                          skip_nosource = TRUE, sanitise = TRUE) {
+                          skip_nosource = TRUE, sanitise = TRUE, r_each = NULL) {
   cl <- .warp_collect(src, t_srs = t_srs, te = te, te_srs = te_srs, tr = tr,
                       ts = ts, bands = bands, cl_arg = cl_arg, dst = dst,
                       overview = overview, margin = margin, io = io,
@@ -164,7 +170,47 @@ ck_stack_read <- function(src,
   .stack_assemble(cl$ws, cl$plans, dst, cl_arg = cl_arg,
                   t_srs_warp = cl$t_srs_warp, nodata = cl$nodata,
                   band_names = band_names, skip_nosource = skip_nosource,
-                  envir = environment())
+                  envir = environment(), r_each = r_each)
+}
+
+# Allowed GDAL resampling methods (shared by ck_stack / ck_batch).
+.r_methods <- c("near", "bilinear", "cubic", "cubicspline", "lanczos",
+                "average", "rms", "mode", "max", "min", "med",
+                "q1", "q3", "sum")
+
+# Validate every element of a resampling vector against the allowed methods.
+.check_r_methods <- function(rf) {
+  bad <- setdiff(unique(rf), .r_methods)
+  if (length(bad)) {
+    cli::cli_abort("Unknown {.arg r} method{?s}: {.val {bad}}.")
+  }
+  rf
+}
+
+# Resolve `r` to a length-`n` per-source vector. Accepts the multi-choice
+# default (treated as unspecified -> the first method), a single method, or a
+# length-`n` vector (one per source).
+.resolve_resampling <- function(r, n) {
+  if (length(r) == length(.r_methods) && all(r == .r_methods)) {
+    r <- .r_methods[1] # the unspecified formal default
+  }
+  if (length(r) == 1L) {
+    return(rep(.check_r_methods(r), n))
+  }
+  if (length(r) != n) {
+    cli::cli_abort(c(
+      "{.arg r} must be a single method or one per source ({.val {n}}).",
+      "i" = "Got {.val {length(r)}}."
+    ))
+  }
+  .check_r_methods(r)
+}
+
+# Remove a one-value flag (e.g. "-r near") from an assembled cl_arg vector.
+.strip_cl_arg <- function(cl, flag) {
+  i <- which(cl == flag)
+  if (!length(i)) return(cl)
+  cl[-sort(unique(c(i, i + 1L)))]
 }
 
 # Stage already-fetched windows, stack them as separate bands, and materialise
@@ -174,18 +220,21 @@ ck_stack_read <- function(src,
 # (sources assumed aligned). Warp-then-stack: a reprojection/resolution change
 # was requested, so bring each source onto the common grid before stacking.
 .stack_assemble <- function(ws, plans, dst, cl_arg, t_srs_warp, nodata,
-                            band_names, skip_nosource, envir) {
+                            band_names, skip_nosource, envir, r_each = NULL) {
   vrts <- .warp_stage(ws, plans, envir)
   all_copy <- all(vapply(plans, function(p) isTRUE(p$is_copy), logical(1)))
   tmp <- character(0)
+  # Resampling only applies on the warp path; a native-window copy ignores it.
+  # `r_each` (one method per source) overrides the `-r` in `cl_arg` per source.
   tiles <- if (all_copy) {
     vrts
   } else {
-    warp_args <- c(cl_arg, .skip_nosource_args(cl_arg, skip_nosource, nodata))
-    vapply(vrts, function(v) {
+    vapply(seq_along(vrts), function(i) {
+      ra <- if (is.null(r_each)) cl_arg else c(cl_arg, "-r", r_each[[i]])
+      warp_args <- c(ra, .skip_nosource_args(ra, skip_nosource, nodata))
       o <- sprintf("/vsimem/%s.tif", basename(tempfile("ckstack_t_")))
-      gdalraster::warp(src_files = v, dst_filename = o, t_srs = t_srs_warp,
-                       cl_arg = warp_args, quiet = TRUE)
+      gdalraster::warp(src_files = vrts[[i]], dst_filename = o,
+                       t_srs = t_srs_warp, cl_arg = warp_args, quiet = TRUE)
       o
     }, character(1))
   }

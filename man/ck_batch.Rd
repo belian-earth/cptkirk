@@ -67,11 +67,10 @@ snaps the output extent outward, so it is no longer exactly \code{te}. No effect
 with \code{ts} or on the copy path. An explicit \code{-tap} in \code{cl_arg} is always
 honoured. (\code{warp_remote()} never adds this; pass \code{-tap} yourself.)}
 
-\item{r}{Resampling method, one of \code{"near"} (default), \code{"bilinear"},
-\code{"cubic"}, \code{"cubicspline"}, \code{"lanczos"}, \code{"average"}, \code{"rms"}, \code{"mode"},
-\code{"max"}, \code{"min"}, \code{"med"}, \code{"q1"}, \code{"q3"}, \code{"sum"}. Matched with
-\code{\link[rlang:arg_match]{rlang::arg_match()}}, so a typo reports the valid set. (A method added by a
-newer GDAL than this list knows can still be passed via \code{cl_arg}.)}
+\item{r}{Resampling method (used only on the warp path). Either a single
+method for the whole batch, a flat vector of length equal to the total
+number of assets, or a list mirroring \code{src} for a per-band method (e.g.
+\code{"near"} for mask bands, \code{"bilinear"} for reflectance).}
 
 \item{bands}{1-based source bands to read (default: all). Subsetting happens
 during the fetch, so only those bands' bytes are streamed.}
