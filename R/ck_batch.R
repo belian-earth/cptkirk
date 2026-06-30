@@ -156,10 +156,30 @@ ck_batch <- function(src, dst = fs::file_temp(ext = "tif"), stack = FALSE,
     .probe_warp(metas[[1]], t_srs = t_srs, cl_arg = cl_arg,
                 dst = "/vsimem/ckbatch_probe.tif")
   }
+  # Sources on the same grid (e.g. every acquisition of one MGRS tile) yield an
+  # identical window plan, but `.plan_from_meta` runs a PROJ `transform_bounds`
+  # per source -- the dominant prep cost. Compute the plan once per unique grid
+  # signature and reuse it, attaching each source's own URL (used for band
+  # names).
+  sig_of <- function(m) {
+    paste0(paste(m$geotransform, collapse = ","), "|", m$crs %||% "", "|",
+           paste(m$level_width, collapse = ","), "|", paste(m$level_height, collapse = ","))
+  }
+  cache <- new.env(parent = emptyenv())
   plans <- lapply(seq_along(src), function(i) {
-    .plan_from_meta(src[i], metas[[i]], t_srs = t_srs, te = te, te_srs = te_srs,
-                    tr = tr, ts = ts, bands = bands, overview = overview,
-                    margin = margin, max_bytes = max_bytes)
+    m <- metas[[i]]
+    s <- sig_of(m)
+    cached <- get0(s, envir = cache, inherits = FALSE)
+    if (is.null(cached)) {
+      cached <- list(val = .plan_from_meta(src[i], m, t_srs = t_srs, te = te,
+        te_srs = te_srs, tr = tr, ts = ts, bands = bands, overview = overview,
+        margin = margin, max_bytes = max_bytes))
+      assign(s, cached, envir = cache)
+    }
+    p <- cached$val
+    if (is.null(p)) return(NULL)
+    p$src <- src[i]    # grid/window shared; src identifies this asset
+    p
   })
   surv <- Filter(Negate(is.null), plans)
   list(ptr = opened$ptr, plans = plans,
