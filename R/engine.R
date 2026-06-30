@@ -154,7 +154,11 @@
     }
     p <- cached$val
     if (is.null(p)) return(NULL)
-    p$src <- urls[i]    # grid/window shared; src identifies this asset
+    # The grid (geotransform/crs/dims) is shared, so the window plan is reused,
+    # but `src` and `nodata` are PER-SOURCE metadata that must not inherit the
+    # first same-grid source's values (nodata drives staging INIT_DEST/masking).
+    p$src <- urls[i]
+    p$nodata <- metas[[i]]$nodata
     p
   })
 }

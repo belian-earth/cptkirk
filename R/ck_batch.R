@@ -50,10 +50,12 @@
 #'   names are absent. May be a `/vsi*` path. Defaults to a temp-file template.
 #' @return The output paths, mirroring the input structure: a list of character
 #'   vectors when `stack = FALSE`, a named character vector when `stack = TRUE`.
-#'   Groups (or bands) whose source did not overlap the AOI are `NA`.
+#'   Outputs are `NA` when the source did not overlap the AOI, or when its fetch
+#'   failed (the latter emits a warning; for `stack = TRUE` a single failed band
+#'   leaves the whole group `NA`).
 #' @seealso [ck_stack()] for a single group.
 #' @export
-ck_batch <- function(src, dst = fs::file_temp(ext = "tif"), stack = FALSE,
+ck_batch <- function(src, dst = tempfile(fileext = ".tif"), stack = FALSE,
                      t_srs = NULL, te = NULL, te_srs = NULL,
                      tr = NULL, ts = NULL, tap = TRUE,
                      r = c("near", "bilinear", "cubic", "cubicspline", "lanczos",
@@ -190,11 +192,20 @@ ck_batch <- function(src, dst = fs::file_temp(ext = "tif"), stack = FALSE,
 
   out <- vector("list", length(grp_of))        # one slot per source (stack=FALSE)
   acc <- vector("list", ng); have <- integer(ng)  # per-group accumulators
+  failed <- list()                                # (index, error) of failed fetches
 
   repeat {
     rcv <- cog_fetch_take(session)
     if (is.null(rcv)) break
-    if (!is.null(rcv$error)) next              # source failed -> its output stays NA
+    if (!is.null(rcv$error)) {
+      # Distinct from a non-overlapping source (which has a NULL plan and is
+      # never streamed): this source was planned but its fetch failed. Record it
+      # and warn at the end rather than silently returning NA. For stack = TRUE a
+      # failed band leaves have[gi] < need[gi], so that whole group stays NA.
+      failed[[length(failed) + 1L]] <- list(src = plans[[rcv$index]]$src %||% NA_character_,
+                                            error = rcv$error)
+      next
+    }
     si <- rcv$index
     w <- list(bytes = rcv$bytes, xsize = rcv$xsize, ysize = rcv$ysize,
               n_bands = rcv$n_bands, dtype = rcv$dtype,
@@ -216,6 +227,15 @@ ck_batch <- function(src, dst = fs::file_temp(ext = "tif"), stack = FALSE,
         acc[gi] <- list(NULL)                 # free without reindexing the list
       }
     }
+  }
+
+  if (length(failed)) {
+    srcs <- vapply(failed, `[[`, character(1), "src")
+    cli::cli_warn(c(
+      "!" = "{length(failed)} source{?s} failed to fetch; affected output{?s} {?is/are} {.val NA}.",
+      "i" = "First failure: {.file {srcs[1]}} ({failed[[1]]$error})",
+      "i" = "This is distinct from a source that simply did not overlap the AOI."
+    ))
   }
 
   collect1 <- function(x) {

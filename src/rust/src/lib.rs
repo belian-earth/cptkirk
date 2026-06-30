@@ -191,6 +191,20 @@ fn cog_meta_many(
     Ok(List::from_values(metas).into())
 }
 
+/// Validate that the parallel per-window vectors all have length `n`. Indexing a
+/// shorter `Vec` would panic, which extendr cannot turn into an R error (it
+/// unwinds past the FFI boundary and aborts the session) -- so reject up front.
+fn check_window_lens(n: usize, lens: &[(&str, usize)]) -> std::result::Result<(), KirkError> {
+    for (name, len) in lens {
+        if *len != n {
+            return Err(KirkError::Invalid(format!(
+                "window vector `{name}` has length {len}, expected {n}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Concurrently fetch one native-dtype window from each of several sources.
 ///
 /// `srcs` and the per-tile `level`/`xoff`/`yoff`/`xsize`/`ysize` vectors are
@@ -222,6 +236,17 @@ fn cog_fetch_windows_raw(
     };
     let bands0: Vec<usize> = bands.iter().map(|&b| (b - 1).max(0) as usize).collect();
     let n = srcs.len();
+    check_window_lens(
+        n,
+        &[
+            ("level", level.len()),
+            ("xoff", xoff.len()),
+            ("yoff", yoff.len()),
+            ("xsize", xsize.len()),
+            ("ysize", ysize.len()),
+        ],
+    )
+    .map_err(to_r)?;
     let reqs: Vec<window::WindowReq> = (0..n)
         .map(|i| window::WindowReq {
             level: (level[i] - 1).max(0) as usize,
@@ -383,10 +408,29 @@ fn cog_fetch_stream_begin(
         _ => default_io_concurrency(),
     };
     let bands0: Vec<usize> = bands.iter().map(|&b| (b - 1).max(0) as usize).collect();
-    let jobs: Vec<(usize, std::sync::Arc<window::OpenTiff>, window::WindowReq)> = (0..idx.len())
+    let n = idx.len();
+    check_window_lens(
+        n,
+        &[
+            ("level", level.len()),
+            ("xoff", xoff.len()),
+            ("yoff", yoff.len()),
+            ("xsize", xsize.len()),
+            ("ysize", ysize.len()),
+        ],
+    )
+    .map_err(to_r)?;
+    let n_src = set.opens.len();
+    let jobs: Vec<(usize, std::sync::Arc<window::OpenTiff>, window::WindowReq)> = (0..n)
         .map(|k| {
-            let si = (idx[k] - 1).max(0) as usize;
-            (
+            let one = idx[k];
+            if one < 1 || one as usize > n_src {
+                return Err(KirkError::Invalid(format!(
+                    "idx[{k}] = {one} is out of range 1..={n_src}"
+                )));
+            }
+            let si = one as usize - 1;
+            Ok((
                 si,
                 std::sync::Arc::clone(&set.opens[si]),
                 window::WindowReq {
@@ -396,9 +440,10 @@ fn cog_fetch_stream_begin(
                     xsize: xsize[k].max(0) as usize,
                     ysize: ysize[k].max(0) as usize,
                 },
-            )
+            ))
         })
-        .collect();
+        .collect::<std::result::Result<Vec<_>, KirkError>>()
+        .map_err(to_r)?;
 
     let (tx, rx) = std::sync::mpsc::channel();
     rt.spawn(async move {

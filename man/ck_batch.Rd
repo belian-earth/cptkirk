@@ -6,7 +6,7 @@
 \usage{
 ck_batch(
   src,
-  dst = fs::file_temp(ext = "tif"),
+  dst = tempfile(fileext = ".tif"),
   stack = FALSE,
   t_srs = NULL,
   te = NULL,
@@ -141,7 +141,9 @@ wrong pixels.}
 \value{
 The output paths, mirroring the input structure: a list of character
 vectors when \code{stack = FALSE}, a named character vector when \code{stack = TRUE}.
-Groups (or bands) whose source did not overlap the AOI are \code{NA}.
+Outputs are \code{NA} when the source did not overlap the AOI, or when its fetch
+failed (the latter emits a warning; for \code{stack = TRUE} a single failed band
+leaves the whole group \code{NA}).
 }
 \description{
 \code{ck_batch()} takes a \strong{list of groups} of source URLs -- e.g. one group per

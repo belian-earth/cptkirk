@@ -547,6 +547,15 @@ fn plan_tile(open: &OpenTiff, req: &WindowReq, bands0: &[usize]) -> Result<TileP
     let bands: Vec<usize> = if bands0.is_empty() {
         (0..total_bands).collect()
     } else {
+        // Reject out-of-range bands here (as fetch_decoded does): the chunky blit
+        // slices by band index, so an out-of-range band would panic out of bounds.
+        for &b in bands0 {
+            if b >= total_bands {
+                return Err(KirkError::Invalid(format!(
+                    "band {b} >= band count {total_bands}"
+                )));
+            }
+        }
         bands0.to_vec()
     };
     let use_band_fetch = matches!(planar, PlanarConfiguration::Planar)
