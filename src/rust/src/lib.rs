@@ -2,6 +2,7 @@ use extendr_api::prelude::*;
 
 mod band_fetch;
 mod error;
+mod http_reader;
 mod meta;
 mod runtime;
 mod source;
@@ -150,12 +151,32 @@ fn cog_fetch_window_raw(
     .map_err(to_r)
 }
 
-/// Concurrently open several sources and return their metadata.
-///
-/// Opens all `srcs` in a single runtime pass (overlapping the metadata
-/// round-trips) and returns a list with one `read_cog_meta`-style entry per
-/// source, in order. Used to plan a multi-tile mosaic without paying the opens
-/// sequentially.
+/// Open every source once, reusing one connection pool per host (`OpenCache`),
+/// then read each header concurrently over that pool. The shared front of every
+/// multi-source entry point (meta / fetch / sources-open) -- so the whole API
+/// pays ~one TLS handshake per host instead of one per source.
+fn open_all_cached(
+    srcs: &[String],
+    opts: &[(String, String)],
+) -> std::result::Result<Vec<window::OpenTiff>, KirkError> {
+    let rt = runtime::shared_runtime()?;
+    let mut cache = source::OpenCache::new();
+    let readers = srcs
+        .iter()
+        .map(|s| source::open_reader_cached(s, opts, &mut cache))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    rt.block_on(async {
+        // Closure (not the bare fn) is load-bearing: passing the async fn
+        // directly trips "implementation of FnOnce is not general enough".
+        #[allow(clippy::redundant_closure)]
+        futures::future::try_join_all(readers.into_iter().map(|r| window::open_tiff_from_reader(r)))
+            .await
+    })
+}
+
+/// Concurrently open several sources (one connection pool per host) and return
+/// their metadata, in order. Used to plan a multi-tile mosaic / multi-source
+/// `cog_info` without paying the opens sequentially.
 /// @noRd
 #[extendr]
 fn cog_meta_many(
@@ -163,19 +184,28 @@ fn cog_meta_many(
     opt_keys: Vec<String>,
     opt_vals: Vec<String>,
 ) -> extendr_api::Result<Robj> {
-    let rt = runtime::shared_runtime().map_err(to_r)?;
     let opts = zip_opts(opt_keys, opt_vals);
-    let opens = rt
-        .block_on(async {
-            futures::future::try_join_all(srcs.iter().map(|s| window::open_tiff(s, &opts))).await
-        })
-        .map_err(to_r)?;
+    let opens = open_all_cached(&srcs, &opts).map_err(to_r)?;
     let metas: Vec<Robj> = opens
         .iter()
         .map(build_meta)
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(to_r)?;
     Ok(List::from_values(metas).into())
+}
+
+/// Validate that the parallel per-window vectors all have length `n`. Indexing a
+/// shorter `Vec` would panic, which extendr cannot turn into an R error (it
+/// unwinds past the FFI boundary and aborts the session) -- so reject up front.
+fn check_window_lens(n: usize, lens: &[(&str, usize)]) -> std::result::Result<(), KirkError> {
+    for (name, len) in lens {
+        if *len != n {
+            return Err(KirkError::Invalid(format!(
+                "window vector `{name}` has length {len}, expected {n}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Concurrently fetch one native-dtype window from each of several sources.
@@ -209,6 +239,17 @@ fn cog_fetch_windows_raw(
     };
     let bands0: Vec<usize> = bands.iter().map(|&b| (b - 1).max(0) as usize).collect();
     let n = srcs.len();
+    check_window_lens(
+        n,
+        &[
+            ("level", level.len()),
+            ("xoff", xoff.len()),
+            ("yoff", yoff.len()),
+            ("xsize", xsize.len()),
+            ("ysize", ysize.len()),
+        ],
+    )
+    .map_err(to_r)?;
     let reqs: Vec<window::WindowReq> = (0..n)
         .map(|i| window::WindowReq {
             level: (level[i] - 1).max(0) as usize,
@@ -219,15 +260,11 @@ fn cog_fetch_windows_raw(
         })
         .collect();
 
-    // Open every source concurrently, then fetch all windows through one
-    // global concurrency pool (sustained saturation, no per-tile tail).
+    // Open every source once over a shared connection pool, then fetch all
+    // windows through one global concurrency pool (sustained saturation).
+    let opens = open_all_cached(&srcs, &opts).map_err(to_r)?;
     let windows = rt
-        .block_on(async {
-            let opens =
-                futures::future::try_join_all(srcs.iter().map(|s| window::open_tiff(s, &opts)))
-                    .await?;
-            window::fetch_windows_pooled(&opens, &reqs, &bands0, fill, io).await
-        })
+        .block_on(window::fetch_windows_pooled(&opens, &reqs, &bands0, fill, io))
         .map_err(to_r)?;
 
     let out: Vec<Robj> = windows
@@ -304,6 +341,186 @@ fn build_meta(open: &window::OpenTiff) -> std::result::Result<Robj, KirkError> {
     .into())
 }
 
+// --- Streaming fetch session ------------------------------------------------
+//
+// Open every source ONCE (concurrently), then stream each fetched window back to
+// R as it lands -- so the warp/write overlaps the fetch and the per-source
+// header is read once (not twice, as the meta-then-fetch path does). The driver
+// runs the per-source fetches through one `buffer_unordered` pool on the shared
+// runtime, feeding a channel; `cog_fetch_take` blocks for the next completion.
+
+/// A set of sources opened once, reused for streamed window fetches.
+struct SourceSet {
+    opens: Vec<std::sync::Arc<window::OpenTiff>>,
+}
+
+/// Receiver end of an in-flight streaming fetch. The channel is BOUNDED so a
+/// slow consumer applies backpressure to the fetch pool (peak memory ~`io`
+/// windows, not the whole job). `Mutex` only to satisfy the external-pointer Sync
+/// bound; it is accessed solely from R's thread. The `JoinHandle` lets us abort
+/// the detached fetch task if R abandons the session (Drop), so we stop fetching
+/// instead of draining the rest into a closed channel.
+struct FetchSession {
+    rx: std::sync::Mutex<
+        tokio::sync::mpsc::Receiver<(usize, std::result::Result<window::NativeWindow, String>)>,
+    >,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for FetchSession {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+
+/// Open many sources concurrently. Returns `list(ptr, metas)`: a reusable
+/// handle plus per-source metadata for window planning. The header is read here
+/// once; the subsequent stream fetches reuse the open handles.
+/// @noRd
+#[extendr]
+fn cog_sources_open(
+    srcs: Vec<String>,
+    opt_keys: Vec<String>,
+    opt_vals: Vec<String>,
+) -> extendr_api::Result<Robj> {
+    let opts = zip_opts(opt_keys, opt_vals);
+    let opens: Vec<std::sync::Arc<window::OpenTiff>> = open_all_cached(&srcs, &opts)
+        .map_err(to_r)?
+        .into_iter()
+        .map(std::sync::Arc::new)
+        .collect();
+    let metas: Vec<Robj> = opens
+        .iter()
+        .map(|o| build_meta(o))
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(to_r)?;
+    let ptr: Robj = ExternalPtr::new(SourceSet { opens }).into();
+    Ok(list!(ptr = ptr, metas = List::from_values(metas)).into())
+}
+
+/// Begin streaming the requested per-source windows from an open `SourceSet`.
+/// `idx` is 1-based into the set; the parallel `level/xoff/...` vectors give each
+/// requested window. Returns a session handle; drain it with `cog_fetch_take`.
+/// @noRd
+#[extendr]
+#[allow(clippy::too_many_arguments)]
+fn cog_fetch_stream_begin(
+    set: ExternalPtr<SourceSet>,
+    idx: Vec<i32>,
+    level: Vec<i32>,
+    xoff: Vec<i32>,
+    yoff: Vec<i32>,
+    xsize: Vec<i32>,
+    ysize: Vec<i32>,
+    bands: Vec<i32>,
+    fill: f64,
+    io_concurrency: Nullable<i32>,
+) -> extendr_api::Result<Robj> {
+    let rt = runtime::shared_runtime().map_err(to_r)?;
+    let io = match io_concurrency {
+        Nullable::NotNull(v) if v > 0 => v as usize,
+        _ => default_io_concurrency(),
+    };
+    let bands0: Vec<usize> = bands.iter().map(|&b| (b - 1).max(0) as usize).collect();
+    let n = idx.len();
+    check_window_lens(
+        n,
+        &[
+            ("level", level.len()),
+            ("xoff", xoff.len()),
+            ("yoff", yoff.len()),
+            ("xsize", xsize.len()),
+            ("ysize", ysize.len()),
+        ],
+    )
+    .map_err(to_r)?;
+    let n_src = set.opens.len();
+    let jobs: Vec<(usize, std::sync::Arc<window::OpenTiff>, window::WindowReq)> = (0..n)
+        .map(|k| {
+            let one = idx[k];
+            if one < 1 || one as usize > n_src {
+                return Err(KirkError::Invalid(format!(
+                    "idx[{k}] = {one} is out of range 1..={n_src}"
+                )));
+            }
+            let si = one as usize - 1;
+            Ok((
+                si,
+                std::sync::Arc::clone(&set.opens[si]),
+                window::WindowReq {
+                    level: (level[k] - 1).max(0) as usize,
+                    xoff: xoff[k].max(0) as usize,
+                    yoff: yoff[k].max(0) as usize,
+                    xsize: xsize[k].max(0) as usize,
+                    ysize: ysize[k].max(0) as usize,
+                },
+            ))
+        })
+        .collect::<std::result::Result<Vec<_>, KirkError>>()
+        .map_err(to_r)?;
+
+    let (tx, rx) = tokio::sync::mpsc::channel(io.max(1));
+    let handle = rt.spawn(async move {
+        use futures::stream::StreamExt;
+        futures::stream::iter(jobs.into_iter().map(|(si, open, req)| {
+            let tx = tx.clone();
+            let bands0 = bands0.clone();
+            // Inner tile concurrency is 1: parallelism comes from running `io`
+            // sources at once (right for many small windows), so total in-flight
+            // requests stay ~`io`.
+            async move {
+                let res = window::fetch_window_native(
+                    &open, req.level, req.xoff, req.yoff, req.xsize, req.ysize, &bands0, fill, 1,
+                )
+                .await
+                .map_err(|e| e.to_string());
+                // Awaited send: when the bounded channel is full (consumer behind)
+                // this parks the task, capping peak buffered windows at ~`io`.
+                let _ = tx.send((si, res)).await;
+            }
+        }))
+        .buffer_unordered(io)
+        .collect::<()>()
+        .await;
+    });
+
+    Ok(ExternalPtr::new(FetchSession {
+        rx: std::sync::Mutex::new(rx),
+        handle,
+    })
+    .into())
+}
+
+/// Block for the next completed window (any source, completion order). Returns a
+/// `list(index, bytes, xsize, ysize, n_bands, dtype, bytes_per_sample,
+/// byte_order)` (`index` 1-based into the SourceSet), `list(index, error)` on a
+/// per-source failure, or `NULL` when the stream is fully drained.
+/// @noRd
+#[extendr]
+fn cog_fetch_take(sess: ExternalPtr<FetchSession>) -> extendr_api::Result<Robj> {
+    let rt = runtime::shared_runtime().map_err(to_r)?;
+    let mut rx = sess
+        .rx
+        .lock()
+        .map_err(|_| Error::Other("fetch session lock poisoned".into()))?;
+    // Blocking recv on R's thread; the fetch tasks run on the runtime's workers.
+    match rt.block_on(rx.recv()) {
+        Some((si, Ok(w))) => Ok(list!(
+            index = (si + 1) as i32,
+            bytes = Raw::from_bytes(&w.bytes),
+            xsize = w.xsize as i32,
+            ysize = w.ysize as i32,
+            n_bands = w.n_bands as i32,
+            dtype = w.dtype_name,
+            bytes_per_sample = w.bps as i32,
+            byte_order = window::native_byte_order()
+        )
+        .into()),
+        Some((si, Err(e))) => Ok(list!(index = (si + 1) as i32, error = e).into()),
+        None => Ok(r!(NULL)),
+    }
+}
+
 extendr_module! {
     mod cptkirk;
     fn cog_open;
@@ -312,4 +529,7 @@ extendr_module! {
     fn cog_fetch_window;
     fn cog_fetch_window_raw;
     fn cog_fetch_windows_raw;
+    fn cog_sources_open;
+    fn cog_fetch_stream_begin;
+    fn cog_fetch_take;
 }

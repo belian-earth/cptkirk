@@ -14,12 +14,9 @@ cog_open <- function(src, opt_keys, opt_vals) .Call(wrap__cog_open, src, opt_key
 #' @noRd
 cog_meta <- function(h) .Call(wrap__cog_meta, h)
 
-#' Concurrently open several sources and return their metadata.
-#'
-#' Opens all `srcs` in a single runtime pass (overlapping the metadata
-#' round-trips) and returns a list with one `read_cog_meta`-style entry per
-#' source, in order. Used to plan a multi-tile mosaic without paying the opens
-#' sequentially.
+#' Concurrently open several sources (one connection pool per host) and return
+#' their metadata, in order. Used to plan a multi-tile mosaic / multi-source
+#' `cog_info` without paying the opens sequentially.
 #' @noRd
 cog_meta_many <- function(srcs, opt_keys, opt_vals) .Call(wrap__cog_meta_many, srcs, opt_keys, opt_vals)
 
@@ -47,5 +44,24 @@ cog_fetch_window_raw <- function(h, level, xoff, yoff, xsize, ysize, bands, fill
 #' list with one element per tile, each as in `cog_fetch_window_raw`.
 #' @noRd
 cog_fetch_windows_raw <- function(srcs, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency, opt_keys, opt_vals) .Call(wrap__cog_fetch_windows_raw, srcs, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency, opt_keys, opt_vals)
+
+#' Open many sources concurrently. Returns `list(ptr, metas)`: a reusable
+#' handle plus per-source metadata for window planning. The header is read here
+#' once; the subsequent stream fetches reuse the open handles.
+#' @noRd
+cog_sources_open <- function(srcs, opt_keys, opt_vals) .Call(wrap__cog_sources_open, srcs, opt_keys, opt_vals)
+
+#' Begin streaming the requested per-source windows from an open `SourceSet`.
+#' `idx` is 1-based into the set; the parallel `level/xoff/...` vectors give each
+#' requested window. Returns a session handle; drain it with `cog_fetch_take`.
+#' @noRd
+cog_fetch_stream_begin <- function(set, idx, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency) .Call(wrap__cog_fetch_stream_begin, set, idx, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency)
+
+#' Block for the next completed window (any source, completion order). Returns a
+#' `list(index, bytes, xsize, ysize, n_bands, dtype, bytes_per_sample,
+#' byte_order)` (`index` 1-based into the SourceSet), `list(index, error)` on a
+#' per-source failure, or `NULL` when the stream is fully drained.
+#' @noRd
+cog_fetch_take <- function(sess) .Call(wrap__cog_fetch_take, sess)
 
 # nolint end

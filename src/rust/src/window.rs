@@ -15,22 +15,27 @@ use std::sync::Arc;
 use async_tiff::decoder::DecoderRegistry;
 use async_tiff::metadata::cache::ReadaheadMetadataCache;
 use async_tiff::metadata::TiffMetadataReader;
-use async_tiff::reader::{AsyncFileReader, ObjectReader};
+use async_tiff::reader::AsyncFileReader;
 use async_tiff::tags::PlanarConfiguration;
 use async_tiff::{TypedArray, TIFF};
 use futures::stream::{self, StreamExt, TryStreamExt};
 
 use crate::error::{KirkError, Result};
-use crate::source::parse_src;
+use crate::source::open_reader;
 
 pub(crate) struct OpenTiff {
-    pub reader: ObjectReader,
+    pub reader: Arc<dyn AsyncFileReader>,
     pub tiff: TIFF,
 }
 
 pub(crate) async fn open_tiff(src: &str, opts: &[(String, String)]) -> Result<OpenTiff> {
-    let (store, path) = parse_src(src, opts)?;
-    let reader = ObjectReader::new(store, path);
+    open_tiff_from_reader(open_reader(src, opts)?).await
+}
+
+/// Read the header + all IFDs over an already-built reader. Splitting this from
+/// reader construction lets a multi-source open build readers once (sharing a
+/// connection pool via `OpenCache`) and then read metadata concurrently.
+pub(crate) async fn open_tiff_from_reader(reader: Arc<dyn AsyncFileReader>) -> Result<OpenTiff> {
     let cache = ReadaheadMetadataCache::new(reader.clone());
     let mut meta = TiffMetadataReader::try_open(&cache).await?;
     let ifds = meta.read_all_ifds(&cache).await?;
@@ -363,7 +368,9 @@ fn alloc_filled(xsize: usize, ysize: usize, n_sel: usize, bps: usize,
 
 /// Blit one decoded COG tile into the band-sequential native output buffer.
 /// `out` is the whole window buffer; this writes only the tile's overlap.
-#[allow(clippy::too_many_arguments)]
+// out_b indexes `bands` only in the non-subset branch; it also drives the dst
+// offset arithmetic, so an enumerate() rewrite would not be clearer.
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 fn blit_cog_tile(out: &mut [u8], data: &TypedArray, subset: bool, tx: usize, ty: usize,
                  planar: PlanarConfiguration, total_bands: usize, tile_w: usize,
                  tile_h: usize, bands: &[usize], xoff: usize, yoff: usize,
@@ -483,7 +490,7 @@ pub(crate) struct WindowReq {
 /// Per-tile fetch plan: everything needed to fetch + blit its COG tiles,
 /// resolved once (no I/O beyond what `open_tiff` already did).
 struct TilePlan {
-    reader: ObjectReader,
+    reader: Arc<dyn AsyncFileReader>,
     ifd: Arc<async_tiff::ImageFileDirectory>,
     planar: PlanarConfiguration,
     total_bands: usize,
@@ -542,6 +549,15 @@ fn plan_tile(open: &OpenTiff, req: &WindowReq, bands0: &[usize]) -> Result<TileP
     let bands: Vec<usize> = if bands0.is_empty() {
         (0..total_bands).collect()
     } else {
+        // Reject out-of-range bands here (as fetch_decoded does): the chunky blit
+        // slices by band index, so an out-of-range band would panic out of bounds.
+        for &b in bands0 {
+            if b >= total_bands {
+                return Err(KirkError::Invalid(format!(
+                    "band {b} >= band count {total_bands}"
+                )));
+            }
+        }
         bands0.to_vec()
     };
     let use_band_fetch = matches!(planar, PlanarConfiguration::Planar)
