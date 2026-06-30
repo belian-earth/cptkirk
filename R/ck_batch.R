@@ -232,11 +232,15 @@ ck_batch <- function(src, dst = tempfile(fileext = ".tif"), stack = FALSE,
   dispatch <- function(ws_u, pl_u, dst1, r_u) {
     if (use_par) {
       # Buffers are shared to the daemon zero-copy via mori (see mori::share
-      # below); each daemon warps single-threaded.
+      # below); each daemon warps single-threaded. `.stack_assemble` is passed as
+      # a value (`asm`) rather than named with `:::`: its environment is cptkirk's
+      # namespace, restored on the daemon (which has loaded the package), so no
+      # in-package `:::` is needed.
       mirai::mirai(
-        cptkirk:::.stack_assemble(ws_u, pl_u, dst1, cl_arg = cl_base,
-          t_srs_warp = t_srs_warp, nodata = nodata, band_names = NULL,
-          skip_nosource = skip_nosource, envir = environment(), r_each = r_u),
+        asm(ws_u, pl_u, dst1, cl_arg = cl_base, t_srs_warp = t_srs_warp,
+          nodata = nodata, band_names = NULL, skip_nosource = skip_nosource,
+          envir = environment(), r_each = r_u),
+        asm = .stack_assemble,
         ws_u = ws_u, pl_u = pl_u, dst1 = dst1, r_u = r_u, cl_base = cl_base,
         t_srs_warp = t_srs_warp, nodata = nodata, skip_nosource = skip_nosource)
     } else {
