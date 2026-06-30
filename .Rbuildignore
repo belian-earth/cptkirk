@@ -8,6 +8,8 @@
 ^src/Makevars\.win$
 ^README\.Rmd$
 ^bench$
+^benchmarks$
+^bench_warp_vs_curl\.R$
 ^\.claude$
 ^scratch\.R$
 ^LICENSE\.md$
