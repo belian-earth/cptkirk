@@ -68,8 +68,7 @@ pub(crate) fn open_reader_cached(
             let client = match &cache.http_client {
                 Some(c) => c.clone(),
                 None => {
-                    let c = reqwest::Client::builder()
-                        .build()
+                    let c = crate::http_reader::build_http_client()
                         .map_err(|e| KirkError::Invalid(format!("http client: {e}")))?;
                     cache.http_client = Some(c.clone());
                     c

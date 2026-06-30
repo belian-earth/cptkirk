@@ -131,6 +131,14 @@
   out
 }
 
+# Signature identifying a source's GRID: geotransform + crs + per-level dims.
+# Two sources sharing this signature have an identical window plan for a given
+# request (the window geometry is a pure function of the grid + request).
+.grid_sig <- function(m) {
+  paste0(paste(m$geotransform, collapse = ","), "|", m$crs %||% "", "|",
+         paste(m$level_width, collapse = ","), "|", paste(m$level_height, collapse = ","))
+}
+
 # Plan each source's window from its metadata, caching by grid signature
 # (geotransform + crs + level dims): sources on the same grid (e.g. every
 # acquisition of one MGRS tile, or the bands of one item) share a plan, so the
@@ -138,13 +146,9 @@
 # once per source. Each plan carries its own `src` URL. Non-overlapping -> NULL.
 .plan_sources <- function(urls, metas, t_srs, te, te_srs, tr, ts, bands,
                           overview, margin, max_bytes) {
-  sig_of <- function(m) {
-    paste0(paste(m$geotransform, collapse = ","), "|", m$crs %||% "", "|",
-           paste(m$level_width, collapse = ","), "|", paste(m$level_height, collapse = ","))
-  }
   cache <- new.env(parent = emptyenv())
   lapply(seq_along(urls), function(i) {
-    s <- sig_of(metas[[i]])
+    s <- .grid_sig(metas[[i]])
     cached <- get0(s, envir = cache, inherits = FALSE)
     if (is.null(cached)) {
       cached <- list(val = .plan_from_meta(urls[i], metas[[i]], t_srs = t_srs,

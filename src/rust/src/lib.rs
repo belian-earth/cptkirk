@@ -166,6 +166,9 @@ fn open_all_cached(
         .map(|s| source::open_reader_cached(s, opts, &mut cache))
         .collect::<std::result::Result<Vec<_>, _>>()?;
     rt.block_on(async {
+        // Closure (not the bare fn) is load-bearing: passing the async fn
+        // directly trips "implementation of FnOnce is not general enough".
+        #[allow(clippy::redundant_closure)]
         futures::future::try_join_all(readers.into_iter().map(|r| window::open_tiff_from_reader(r)))
             .await
     })
@@ -351,12 +354,23 @@ struct SourceSet {
     opens: Vec<std::sync::Arc<window::OpenTiff>>,
 }
 
-/// Receiver end of an in-flight streaming fetch. `Mutex` only to satisfy the
-/// external-pointer Sync bound; it is accessed solely from R's thread.
+/// Receiver end of an in-flight streaming fetch. The channel is BOUNDED so a
+/// slow consumer applies backpressure to the fetch pool (peak memory ~`io`
+/// windows, not the whole job). `Mutex` only to satisfy the external-pointer Sync
+/// bound; it is accessed solely from R's thread. The `JoinHandle` lets us abort
+/// the detached fetch task if R abandons the session (Drop), so we stop fetching
+/// instead of draining the rest into a closed channel.
 struct FetchSession {
     rx: std::sync::Mutex<
-        std::sync::mpsc::Receiver<(usize, std::result::Result<window::NativeWindow, String>)>,
+        tokio::sync::mpsc::Receiver<(usize, std::result::Result<window::NativeWindow, String>)>,
     >,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for FetchSession {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
 }
 
 /// Open many sources concurrently. Returns `list(ptr, metas)`: a reusable
@@ -445,8 +459,8 @@ fn cog_fetch_stream_begin(
         .collect::<std::result::Result<Vec<_>, KirkError>>()
         .map_err(to_r)?;
 
-    let (tx, rx) = std::sync::mpsc::channel();
-    rt.spawn(async move {
+    let (tx, rx) = tokio::sync::mpsc::channel(io.max(1));
+    let handle = rt.spawn(async move {
         use futures::stream::StreamExt;
         futures::stream::iter(jobs.into_iter().map(|(si, open, req)| {
             let tx = tx.clone();
@@ -460,7 +474,9 @@ fn cog_fetch_stream_begin(
                 )
                 .await
                 .map_err(|e| e.to_string());
-                let _ = tx.send((si, res));
+                // Awaited send: when the bounded channel is full (consumer behind)
+                // this parks the task, capping peak buffered windows at ~`io`.
+                let _ = tx.send((si, res)).await;
             }
         }))
         .buffer_unordered(io)
@@ -470,6 +486,7 @@ fn cog_fetch_stream_begin(
 
     Ok(ExternalPtr::new(FetchSession {
         rx: std::sync::Mutex::new(rx),
+        handle,
     })
     .into())
 }
@@ -481,12 +498,14 @@ fn cog_fetch_stream_begin(
 /// @noRd
 #[extendr]
 fn cog_fetch_take(sess: ExternalPtr<FetchSession>) -> extendr_api::Result<Robj> {
-    let rx = sess
+    let rt = runtime::shared_runtime().map_err(to_r)?;
+    let mut rx = sess
         .rx
         .lock()
         .map_err(|_| Error::Other("fetch session lock poisoned".into()))?;
-    match rx.recv() {
-        Ok((si, Ok(w))) => Ok(list!(
+    // Blocking recv on R's thread; the fetch tasks run on the runtime's workers.
+    match rt.block_on(rx.recv()) {
+        Some((si, Ok(w))) => Ok(list!(
             index = (si + 1) as i32,
             bytes = Raw::from_bytes(&w.bytes),
             xsize = w.xsize as i32,
@@ -497,8 +516,8 @@ fn cog_fetch_take(sess: ExternalPtr<FetchSession>) -> extendr_api::Result<Robj> 
             byte_order = window::native_byte_order()
         )
         .into()),
-        Ok((si, Err(e))) => Ok(list!(index = (si + 1) as i32, error = e).into()),
-        Err(_) => Ok(r!(NULL)),
+        Some((si, Err(e))) => Ok(list!(index = (si + 1) as i32, error = e).into()),
+        None => Ok(r!(NULL)),
     }
 }
 

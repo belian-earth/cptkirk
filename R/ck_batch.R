@@ -145,9 +145,20 @@ ck_batch <- function(src, dst = tempfile(fileext = ".tif"), stack = FALSE,
   }
 
   if (!isTRUE(sanitise)) {
-    # Trusted: one grid for the whole batch. Plan from the first source, reuse
-    # the window for all (off-grid sources fail their fetch -> NA, rather than
-    # silently wrong, unless an identical-size off-grid tile -- caller's call).
+    # Trusted: one grid for the whole batch. Plan the window from the first source
+    # and reuse it for all. The headers are already in hand (cog_sources_open read
+    # every one), so a grid-signature check is nearly free and turns the silent-
+    # wrong-pixels foot-gun (same-size off-grid tiles) into a hard error, while
+    # still skipping the per-source PROJ transform and the probe.
+    sigs <- vapply(metas, .grid_sig, character(1))
+    off <- which(sigs != sigs[1])
+    if (length(off)) {
+      cli::cli_abort(c(
+        "{.code sanitise = FALSE} requires all sources to share one grid, but {length(off)} differ{?s} from the first.",
+        "i" = "Source{?s} {off} {?has/have} a different geotransform/CRS/size.",
+        "i" = "Use the default {.code sanitise = TRUE} for mixed grids."
+      ))
+    }
     w <- plan1(1L)
     if (is.null(w)) {
       cli::cli_abort(c(
@@ -155,7 +166,10 @@ ck_batch <- function(src, dst = tempfile(fileext = ".tif"), stack = FALSE,
         "i" = "{.code sanitise = FALSE} assumes all sources share one grid; check the AOI, or use the default."
       ))
     }
-    plans <- lapply(src, function(u) { w$src <- u; w })
+    # Window/grid shared; nodata is still per-source (see .plan_sources).
+    plans <- lapply(seq_along(src), function(i) {
+      p <- w; p$src <- src[i]; p$nodata <- metas[[i]]$nodata; p
+    })
     return(list(ptr = opened$ptr, plans = plans, nodata = w$nodata,
                 t_srs_warp = t_srs %||% w$crs))
   }
@@ -297,11 +311,11 @@ ck_batch <- function(src, dst = tempfile(fileext = ".tif"), stack = FALSE,
     ))
   }
 
-  # Template: derive unique names from the base path + group/band names.
+  # Template: derive names from the base path + group/band names.
   dir  <- dirname(dst)
   stem <- tools::file_path_sans_ext(basename(dst))
   ext  <- tools::file_ext(dst); if (!nzchar(ext)) ext <- "tif"
-  if (stack) {
+  res <- if (stack) {
     stats::setNames(file.path(dir, sprintf("%s_%s.%s", stem, gnames, ext)),
                     names(src))
   } else {
@@ -312,4 +326,16 @@ ck_batch <- function(src, dst = tempfile(fileext = ".tif"), stack = FALSE,
     })
     stats::setNames(out, names(src))
   }
+  # Duplicate group/band names would expand to colliding paths -> silent
+  # overwrite + a returned vector pointing two outputs at one file. Reject it.
+  flat <- unlist(res, use.names = FALSE)
+  dups <- unique(flat[duplicated(flat)])
+  if (length(dups)) {
+    cli::cli_abort(c(
+      "The {.arg dst} template expands to duplicate output paths.",
+      "i" = "Collision{?s}: {.file {dups}}",
+      "i" = "Give {.arg src} unique group/band names, or pass an explicit {.arg dst}."
+    ))
+  }
+  res
 }

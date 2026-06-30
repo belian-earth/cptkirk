@@ -368,7 +368,9 @@ fn alloc_filled(xsize: usize, ysize: usize, n_sel: usize, bps: usize,
 
 /// Blit one decoded COG tile into the band-sequential native output buffer.
 /// `out` is the whole window buffer; this writes only the tile's overlap.
-#[allow(clippy::too_many_arguments)]
+// out_b indexes `bands` only in the non-subset branch; it also drives the dst
+// offset arithmetic, so an enumerate() rewrite would not be clearer.
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 fn blit_cog_tile(out: &mut [u8], data: &TypedArray, subset: bool, tx: usize, ty: usize,
                  planar: PlanarConfiguration, total_bands: usize, tile_w: usize,
                  tile_h: usize, bands: &[usize], xoff: usize, yoff: usize,

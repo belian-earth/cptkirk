@@ -49,11 +49,20 @@ pub(crate) struct SignedHttpReader {
     url: reqwest::Url,
 }
 
+/// Build the reqwest client used for pre-signed range reads. Timeouts ensure a
+/// stalled server/connection fails instead of hanging forever -- the R consumer
+/// drains via a blocking recv that does not poll R interrupts, so an unbounded
+/// hang there is uninterruptible.
+pub(crate) fn build_http_client() -> reqwest::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+}
+
 impl SignedHttpReader {
     pub(crate) fn new(url: reqwest::Url) -> AsyncTiffResult<Self> {
-        let client = reqwest::Client::builder()
-            .build()
-            .map_err(|e| AsyncTiffError::External(Box::new(e)))?;
+        let client = build_http_client().map_err(|e| AsyncTiffError::External(Box::new(e)))?;
         Ok(Self { client, url })
     }
 
@@ -82,6 +91,11 @@ impl SignedHttpReader {
     /// to fall back. In the `200` case the body is never read (the status is
     /// checked first), so the full object is not downloaded.
     async fn try_multirange(&self, ranges: &[Range<u64>]) -> AsyncTiffResult<Option<Vec<Bytes>>> {
+        // An empty range would underflow `r.end - 1`; fall back to per-range
+        // (which handles empties) rather than emit a malformed multi-range spec.
+        if ranges.iter().any(|r| r.end <= r.start) {
+            return Ok(None);
+        }
         let spec = ranges
             .iter()
             .map(|r| format!("{}-{}", r.start, r.end - 1))
@@ -121,6 +135,11 @@ impl SignedHttpReader {
 #[async_trait]
 impl AsyncFileReader for SignedHttpReader {
     async fn get_bytes(&self, range: Range<u64>) -> AsyncTiffResult<Bytes> {
+        // Empty range (e.g. a sparse COG tile with byte_count 0): no request, and
+        // avoid `range.end - 1` underflowing to a bogus `bytes=start-u64::MAX`.
+        if range.end <= range.start {
+            return Ok(Bytes::new());
+        }
         // HTTP byte ranges are inclusive; async-tiff's range end is exclusive.
         let resp = self
             .range_request(format!("bytes={}-{}", range.start, range.end - 1))
@@ -135,7 +154,10 @@ impl AsyncFileReader for SignedHttpReader {
             0 => Ok(Vec::new()),
             1 => Ok(vec![self.get_bytes(ranges.into_iter().next().unwrap()).await?]),
             _ => {
-                if let Some(parts) = self.try_multirange(&ranges).await? {
+                // A server may reject a long multi-range header (e.g. 400/416);
+                // treat any multi-range failure as "not honoured" and fall back
+                // to bounded per-range requests rather than failing the read.
+                if let Ok(Some(parts)) = self.try_multirange(&ranges).await {
                     return Ok(parts);
                 }
                 self.fetch_concurrent(ranges).await
@@ -231,7 +253,7 @@ fn parse_content_range(headers: &[u8]) -> Option<(u64, u64)> {
     for line in text.split("\r\n") {
         let line = line.trim();
         if line.len() >= 13 && line[..13].eq_ignore_ascii_case("content-range") {
-            let value = line.splitn(2, ':').nth(1)?.trim();
+            let value = line.split_once(':')?.1.trim();
             let spec = value.strip_prefix("bytes").unwrap_or(value).trim();
             let range_part = spec.split('/').next()?.trim();
             let mut it = range_part.split('-');
