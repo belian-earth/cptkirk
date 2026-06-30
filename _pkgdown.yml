@@ -28,6 +28,13 @@ reference:
   - ck_warp
   - warp_remote
   - ck_read
+- title: Stacking & batch
+  desc: |
+    Drive many sources through one saturating pool: stack sources as separate bands of one output, or reproject/resample a whole list of groups (e.g. a STAC item list, one group per acquisition) in a single streaming fetch.
+  contents:
+  - ck_stack
+  - ck_stack_read
+  - ck_batch
 - title: Inspection
   desc: |
     Read a source's structure and georeferencing, or open it once and reuse the handle across calls.
