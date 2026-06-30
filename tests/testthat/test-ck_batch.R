@@ -92,6 +92,24 @@ test_that("ck_batch rejects a mis-shaped list r", {
   )
 })
 
+test_that("ck_batch sanitise = FALSE (trusted single-grid) matches the default", {
+  dir <- withr::local_tempdir()
+  src <- make_groups(dir)                     # uniform grid -> trust path valid
+  m <- cog_info(src[[1]][1]); gt <- m$geotransform
+  te <- c(gt[1], gt[4] + 32 * gt[6], gt[1] + 32 * gt[2], gt[4])
+
+  def  <- ck_batch(src, dst = file.path(dir, "d.tif"), stack = FALSE, te = te,
+                   sanitise = TRUE)
+  fast <- ck_batch(src, dst = file.path(dir, "f.tif"), stack = FALSE, te = te,
+                   sanitise = FALSE)
+  expect_equal(lengths(fast), lengths(def))
+  for (g in seq_along(src)) {
+    for (b in seq_along(src[[g]])) {
+      expect_equal(read_band(fast[[g]][b]), read_band(def[[g]][b]))
+    }
+  }
+})
+
 test_that("ck_batch parallel path (mirai + mori) matches the serial path", {
   skip_on_cran()
   skip_if_not_installed("mirai")

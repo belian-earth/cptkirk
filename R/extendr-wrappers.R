@@ -60,6 +60,14 @@ cog_sources_open <- function(srcs, opt_keys, opt_vals) .Call(wrap__cog_sources_o
 #' @noRd
 cog_fetch_stream_begin <- function(set, idx, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency) .Call(wrap__cog_fetch_stream_begin, set, idx, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency)
 
+#' Like `cog_fetch_stream_begin`, but opens each source inside its own fetch
+#' task (from URLs, no pre-opened SourceSet) so the per-source open overlaps the
+#' fetch instead of forming an open-all barrier. The caller must already know
+#' the window for every source (e.g. a trusted single grid planned from one
+#' source). `index` in the stream is 1-based into `srcs`.
+#' @noRd
+cog_stream_fetch_urls_begin <- function(srcs, opt_keys, opt_vals, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency) .Call(wrap__cog_stream_fetch_urls_begin, srcs, opt_keys, opt_vals, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency)
+
 #' Block for the next completed window (any source, completion order). Returns a
 #' `list(index, bytes, xsize, ysize, n_bands, dtype, bytes_per_sample,
 #' byte_order)` (`index` 1-based into the SourceSet), `list(index, error)` on a

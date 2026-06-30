@@ -138,10 +138,14 @@ lower if a store rate-limits.}
 large multi-band raster at native resolution; narrow the request, coarsen
 \code{tr}/\code{ts}, or raise this to allow it.}
 
-\item{sanitise}{If \code{TRUE} (default), validate the warp arguments against a
-tiny metadata-derived stand-in \emph{before} fetching, so a bad CRS, resampling
-method, creation option or unknown flag fails in milliseconds instead of
-after a remote read. Set \code{FALSE} to skip the check.}
+\item{sanitise}{Logical. \code{TRUE} (default) validates the request and opens
+every source to plan and verify its grid, so mixed grids are handled
+safely. \code{FALSE} is a trusted fast path: it plans the window from a \strong{single}
+source and assumes all sources share that grid, folding the remaining opens
+into the fetch stream (no up-front header read for every source). Use it
+only when the inputs are known to share one grid (e.g. assets of one MGRS
+tile); off-grid sources may fail or, if their extent happens to contain the
+window, return wrong pixels.}
 }
 \value{
 The output paths, mirroring the input structure: a list of character
