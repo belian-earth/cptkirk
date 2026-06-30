@@ -209,7 +209,12 @@ test_that("ck_batch auto-uses ambient daemons and matches the serial path", {
   skip_if_not_installed("mirai")
   skip_if_not_installed("mori")
   # Daemons are separate processes that load cptkirk via ck_batch's own
-  # everywhere(library(cptkirk)); like any test, this assumes cptkirk is installed.
+  # everywhere(library(cptkirk)) -- so cptkirk must be INSTALLED in a library, not
+  # merely loaded via devtools::load_all (whose in-memory build the daemons can't
+  # see). Skip when it isn't installed; R CMD check / CI install it and run this.
+  if (!any(file.exists(file.path(.libPaths(), "cptkirk", "DESCRIPTION")))) {
+    skip("daemons require an installed cptkirk")
+  }
   dir <- withr::local_tempdir()
   src <- make_groups(dir)
   m <- cog_info(src[[1]][1]); gt <- m$geotransform
