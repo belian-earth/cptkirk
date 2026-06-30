@@ -70,6 +70,19 @@ but the source is streamed remotely. Forwards <code>cl_arg</code> to GDAL verbat
 instead of writing a file, for quick extraction and inspection.</p></li>
 </ul></div>
     <div class="section level2">
+    <h2 id="stacking-and-batch">Stacking and batch<a class="anchor" aria-label="anchor" href="#stacking-and-batch"></a></h2>
+
+
+<p>The same engine drives many sources through one saturating pool:</p><ul><li><p><code><a href="ck_stack.html">ck_stack()</a></code> / <code><a href="ck_stack_read.html">ck_stack_read()</a></code> — fetch one window from N sources and
+write (or return) them as separate bands of a single output: the
+<code>gdalbuildvrt -separate</code> analogue, as opposed to the mosaic <code><a href="ck_warp.html">ck_warp()</a></code>
+makes from multiple sources.</p></li>
+<li><p><code><a href="ck_batch.html">ck_batch()</a></code> — reproject/resample a whole list of groups (e.g. a STAC
+item list, one group per acquisition) through ONE connection pool and ONE
+streaming fetch, writing one file per band or one stacked file per group.
+The output mirrors the structure of the input.</p></li>
+</ul></div>
+    <div class="section level2">
     <h2 id="inspection">Inspection<a class="anchor" aria-label="anchor" href="#inspection"></a></h2>
 
 
@@ -88,7 +101,10 @@ window that source must supply;</p></li>
 concurrency pool across all tiles);</p></li>
 <li><p>stages them in <code>/vsimem</code> and lets GDAL perform the warp, mosaicking
 multiple source tiles in a single pass.</p></li>
-</ol><p>It reimplements none of GDAL's warp logic; it only sizes and saturates the
+</ol><p>Across multiple sources the opens share one connection pool per host — so a
+batch pays roughly one TLS handshake per host, not one per source — and each
+window is warped as soon as it lands, overlapping the fetches still in flight.</p>
+<p>It reimplements none of GDAL's warp logic; it only sizes and saturates the
 fetch. Sources may be local paths or <code>http(s)://</code>, <code>s3://</code>, <code>gs://</code>, <code>az://</code>
 URLs.</p>
     </div>

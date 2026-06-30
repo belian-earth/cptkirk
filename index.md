@@ -20,6 +20,20 @@ stages them as an in-memory GDAL source, then hands the actual
 reprojection and resampling to GDAL. It reimplements none of GDAL’s warp
 logic; it only sizes and saturates the fetch.
 
+## When it helps
+
+`cptkirk`’s single lever is I/O concurrency: it wins by scattering many
+small byte-range reads and keeping the network saturated. That pays off
+on **multi-band rasters**, where `bands =` streams a subset of band
+planes concurrently. Embedding stacks with tens of bands are the case it
+was built for.
+
+On a **single-band asset** there is no band subset to exploit and the
+read is one contiguous tile stream per window: exactly the case GDAL’s
+`/vsicurl` already handles well, so `cptkirk` adds little over it. Reach
+for `cptkirk` when the source is multi-band; for single-band sources
+plain GDAL is usually just as fast.
+
 ## Two ways in
 
 - [`ck_warp()`](https://belian-earth.github.io/cptkirk/reference/ck_warp.html)

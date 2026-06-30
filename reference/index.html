@@ -64,6 +64,36 @@
         </dt>
         <dd>Warp a remote GeoTIFF / COG straight into an R array</dd>
       </dl></div><div class="section level2">
+      <h2 id="stacking-batch">Stacking &amp; batch<a class="anchor" aria-label="anchor" href="#stacking-batch"></a></h2>
+
+      <div class="section-desc"><p>Drive many sources through one saturating pool: stack sources as separate bands of one output, or reproject/resample a whole list of groups (e.g. a STAC item list, one group per acquisition) in a single streaming fetch.</p></div>
+
+      <dl></dl></div><div class="section level2">
+
+
+
+
+      <dl><dt>
+
+          <code><a href="ck_stack.html">ck_stack()</a></code>
+
+        </dt>
+        <dd>Stack many sources into one band-separated raster (buildvrt -separate)</dd>
+
+        <dt>
+
+          <code><a href="ck_stack_read.html">ck_stack_read()</a></code>
+
+        </dt>
+        <dd>Stack many sources straight into an R array</dd>
+
+        <dt>
+
+          <code><a href="ck_batch.html">ck_batch()</a></code>
+
+        </dt>
+        <dd>Fetch many grouped sources through one pool, with structure-preserving output</dd>
+      </dl></div><div class="section level2">
       <h2 id="inspection">Inspection<a class="anchor" aria-label="anchor" href="#inspection"></a></h2>
 
       <div class="section-desc"><p>Read a source’s structure and georeferencing, or open it once and reuse the handle across calls.</p></div>

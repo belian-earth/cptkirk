@@ -30,6 +30,25 @@ Two entry points onto the same engine:
   that returns the result as an R matrix/array instead of writing a
   file, for quick extraction and inspection.
 
+## Stacking and batch
+
+The same engine drives many sources through one saturating pool:
+
+- [`ck_stack()`](https://belian-earth.github.io/cptkirk/reference/ck_stack.md)
+  /
+  [`ck_stack_read()`](https://belian-earth.github.io/cptkirk/reference/ck_stack_read.md)
+  — fetch one window from N sources and write (or return) them as
+  separate bands of a single output: the `gdalbuildvrt -separate`
+  analogue, as opposed to the mosaic
+  [`ck_warp()`](https://belian-earth.github.io/cptkirk/reference/ck_warp.md)
+  makes from multiple sources.
+
+- [`ck_batch()`](https://belian-earth.github.io/cptkirk/reference/ck_batch.md)
+  — reproject/resample a whole list of groups (e.g. a STAC item list,
+  one group per acquisition) through ONE connection pool and ONE
+  streaming fetch, writing one file per band or one stacked file per
+  group. The output mirrors the structure of the input.
+
 ## Inspection
 
 - [`cog_info()`](https://belian-earth.github.io/cptkirk/reference/cog_info.md)
@@ -53,6 +72,11 @@ From a `gdalwarp`-style request cptkirk:
 
 4.  stages them in `/vsimem` and lets GDAL perform the warp, mosaicking
     multiple source tiles in a single pass.
+
+Across multiple sources the opens share one connection pool per host —
+so a batch pays roughly one TLS handshake per host, not one per source —
+and each window is warped as soon as it lands, overlapping the fetches
+still in flight.
 
 It reimplements none of GDAL's warp logic; it only sizes and saturates
 the fetch. Sources may be local paths or `http(s)://`, `s3://`, `gs://`,

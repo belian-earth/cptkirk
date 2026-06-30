@@ -74,6 +74,12 @@
 </ul>
 <p><code>cptkirk</code> is the thin pipe between them. From a <code>gdalwarp</code>-style request it works out exactly which source pixels the warp will need, streams only those tiles over <code>async-tiff</code> at the appropriate overview level, stages them as an in-memory GDAL source, then hands the actual reprojection and resampling to GDAL. It reimplements none of GDAL’s warp logic; it only sizes and saturates the fetch.</p>
 <div class="section level2">
+<h2 id="when-it-helps">When it helps<a class="anchor" aria-label="anchor" href="#when-it-helps"></a>
+</h2>
+<p><code>cptkirk</code>’s single lever is I/O concurrency: it wins by scattering many small byte-range reads and keeping the network saturated. That pays off on <strong>multi-band rasters</strong>, where <code>bands =</code> streams a subset of band planes concurrently. Embedding stacks with tens of bands are the case it was built for.</p>
+<p>On a <strong>single-band asset</strong> there is no band subset to exploit and the read is one contiguous tile stream per window: exactly the case GDAL’s <code>/vsicurl</code> already handles well, so <code>cptkirk</code> adds little over it. Reach for <code>cptkirk</code> when the source is multi-band; for single-band sources plain GDAL is usually just as fast.</p>
+</div>
+<div class="section level2">
 <h2 id="two-ways-in">Two ways in<a class="anchor" aria-label="anchor" href="#two-ways-in"></a>
 </h2>
 <ul>

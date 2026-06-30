@@ -13,6 +13,22 @@ onto a target grid, following the gdalwarp argument interface.
 - [`ck_read()`](https://belian-earth.github.io/cptkirk/reference/ck_read.md)
   : Warp a remote GeoTIFF / COG straight into an R array
 
+## Stacking & batch
+
+Drive many sources through one saturating pool: stack sources as
+separate bands of one output, or reproject/resample a whole list of
+groups (e.g. a STAC item list, one group per acquisition) in a single
+streaming fetch.
+
+- [`ck_stack()`](https://belian-earth.github.io/cptkirk/reference/ck_stack.md)
+  : Stack many sources into one band-separated raster (buildvrt
+  -separate)
+- [`ck_stack_read()`](https://belian-earth.github.io/cptkirk/reference/ck_stack_read.md)
+  : Stack many sources straight into an R array
+- [`ck_batch()`](https://belian-earth.github.io/cptkirk/reference/ck_batch.md)
+  : Fetch many grouped sources through one pool, with
+  structure-preserving output
+
 ## Inspection
 
 Read a source’s structure and georeferencing, or open it once and reuse
