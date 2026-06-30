@@ -191,6 +191,14 @@ test_that("ck_batch auto-uses ambient daemons and matches the serial path", {
   skip_on_cran()
   skip_if_not_installed("mirai")
   skip_if_not_installed("mori")
+  # The daemons are separate processes that load cptkirk via the package's own
+  # everywhere(library(cptkirk)) call -- which needs cptkirk INSTALLED. Under
+  # devtools::load_all there is no installed build to hand them, so skip there
+  # (DEVTOOLS_LOAD is set to the package name during load_all). Runs in R CMD
+  # check / CI, where the package under test is installed.
+  if (identical(Sys.getenv("DEVTOOLS_LOAD"), "cptkirk")) {
+    skip("daemons need an installed cptkirk (skipped under devtools::load_all)")
+  }
   dir <- withr::local_tempdir()
   src <- make_groups(dir)
   m <- cog_info(src[[1]][1]); gt <- m$geotransform
@@ -201,13 +209,6 @@ test_that("ck_batch auto-uses ambient daemons and matches the serial path", {
 
   mirai::daemons(2)
   withr::defer(mirai::daemons(0))
-  # In dev (load_all) the daemons need the dev build; an installed cptkirk is
-  # picked up by ck_batch's own everywhere() call.
-  if (isTRUE(tryCatch(pkgload::is_dev_package("cptkirk"), error = function(e) FALSE))) {
-    pp <- pkgload::pkg_path()
-    mirai::everywhere(pkgload::load_all(PP, quiet = TRUE, helpers = FALSE),
-                      .args = list(PP = pp))
-  }
 
   # Daemons running -> parallel path is auto-selected; output must match serial.
   par <- ck_batch(src, dst = file.path(dir, "par.tif"), stack = FALSE, te = te)
