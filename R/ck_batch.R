@@ -232,15 +232,16 @@ ck_batch <- function(src, dst = tempfile(fileext = ".tif"), stack = FALSE,
   dispatch <- function(ws_u, pl_u, dst1, r_u) {
     if (use_par) {
       # Buffers are shared to the daemon zero-copy via mori (see mori::share
-      # below); each daemon warps single-threaded. `.stack_assemble` is passed as
-      # a value (`asm`) rather than named with `:::`: its environment is cptkirk's
-      # namespace, restored on the daemon (which has loaded the package), so no
-      # in-package `:::` is needed.
+      # below); each daemon warps single-threaded. Resolve the internal helper IN
+      # THE DAEMON via getFromNamespace: it has loaded cptkirk, so only the small
+      # call expression crosses the wire -- not the function body (which passing
+      # it as a data arg would re-serialise every dispatch), and no `:::` operator
+      # (which R CMD check flags) appears in the package source.
       mirai::mirai(
-        asm(ws_u, pl_u, dst1, cl_arg = cl_base, t_srs_warp = t_srs_warp,
-          nodata = nodata, band_names = NULL, skip_nosource = skip_nosource,
+        getFromNamespace(".stack_assemble", "cptkirk")(ws_u, pl_u, dst1,
+          cl_arg = cl_base, t_srs_warp = t_srs_warp, nodata = nodata,
+          band_names = NULL, skip_nosource = skip_nosource,
           envir = environment(), r_each = r_u),
-        asm = .stack_assemble,
         ws_u = ws_u, pl_u = pl_u, dst1 = dst1, r_u = r_u, cl_base = cl_base,
         t_srs_warp = t_srs_warp, nodata = nodata, skip_nosource = skip_nosource)
     } else {
