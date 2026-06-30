@@ -48,4 +48,23 @@ cog_fetch_window_raw <- function(h, level, xoff, yoff, xsize, ysize, bands, fill
 #' @noRd
 cog_fetch_windows_raw <- function(srcs, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency, opt_keys, opt_vals) .Call(wrap__cog_fetch_windows_raw, srcs, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency, opt_keys, opt_vals)
 
+#' Open many sources concurrently. Returns `list(ptr, metas)`: a reusable
+#' handle plus per-source metadata for window planning. The header is read here
+#' once; the subsequent stream fetches reuse the open handles.
+#' @noRd
+cog_sources_open <- function(srcs, opt_keys, opt_vals) .Call(wrap__cog_sources_open, srcs, opt_keys, opt_vals)
+
+#' Begin streaming the requested per-source windows from an open `SourceSet`.
+#' `idx` is 1-based into the set; the parallel `level/xoff/...` vectors give each
+#' requested window. Returns a session handle; drain it with `cog_fetch_take`.
+#' @noRd
+cog_fetch_stream_begin <- function(set, idx, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency) .Call(wrap__cog_fetch_stream_begin, set, idx, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency)
+
+#' Block for the next completed window (any source, completion order). Returns a
+#' `list(index, bytes, xsize, ysize, n_bands, dtype, bytes_per_sample,
+#' byte_order)` (`index` 1-based into the SourceSet), `list(index, error)` on a
+#' per-source failure, or `NULL` when the stream is fully drained.
+#' @noRd
+cog_fetch_take <- function(sess) .Call(wrap__cog_fetch_take, sess)
+
 # nolint end
