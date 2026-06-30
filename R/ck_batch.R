@@ -25,6 +25,14 @@
 #'   inner vector names) are used to name outputs; see `dst`.
 #' @param stack Logical. `FALSE` (default) writes one file per band; `TRUE`
 #'   stacks each group's bands into one file.
+#' @param parallel Whether to warp + write the outputs across **ambient mirai
+#'   daemons** (the fetch always uses cptkirk's single pool). `NULL` (default)
+#'   auto-enables it when the \pkg{mirai} and \pkg{mori} packages are installed
+#'   *and* daemons are running (`mirai::daemons(n)`); `TRUE` requires them and
+#'   errors otherwise; `FALSE` forces the serial path. Fetched window buffers are
+#'   shared to the daemons zero-copy via \pkg{mori} (no per-worker serialisation),
+#'   and each daemon warps single-threaded. Set daemons up yourself; cptkirk uses
+#'   whatever pool is already running and does not spawn or tear down daemons.
 #' @param r Resampling method (used only on the warp path). Either a single
 #'   method for the whole batch, a flat vector of length equal to the total
 #'   number of assets, or a list mirroring `src` for a per-band method (e.g.
@@ -50,7 +58,7 @@ ck_batch <- function(src, dst = fs::file_temp(ext = "tif"), stack = FALSE,
                      r = c("near", "bilinear", "cubic", "cubicspline", "lanczos",
                            "average", "rms", "mode", "max", "min", "med",
                            "q1", "q3", "sum"),
-                     bands = NULL, cl_arg = character(0),
+                     bands = NULL, parallel = NULL, cl_arg = character(0),
                      num_threads = 1L, warp_memory = "auto",
                      cache_max = "auto",
                      co = c("COMPRESS=DEFLATE", "TILED=YES",
@@ -91,28 +99,93 @@ ck_batch <- function(src, dst = fs::file_temp(ext = "tif"), stack = FALSE,
   # Map fetched windows (and per-asset resampling) back to their source URL;
   # non-overlapping sources were dropped during planning and are absent here.
   keys <- vapply(cl$plans, `[[`, character(1), "src")
+  use_par <- .batch_use_parallel(parallel)
+  ws <- cl$ws
+  if (use_par) {
+    # Share each window's byte buffer into OS shared memory; daemons read it
+    # zero-copy (mori serialises the buffer as a tiny reference, not a copy).
+    ws <- lapply(ws, function(w) { w$bytes <- mori::share(w$bytes); w })
+  }
   plan_by <- stats::setNames(cl$plans, keys)
-  ws_by <- stats::setNames(cl$ws, keys)
+  ws_by <- stats::setNames(ws, keys)
   r_by <- stats::setNames(r_flat, all_urls)
 
-  assemble1 <- function(urls, dst1) {
+  # One output unit per band (stack = FALSE) or per group (stack = TRUE).
+  unit_for <- function(urls, dst1) {
     keep <- urls[urls %in% keys]
-    if (!length(keep)) return(NA_character_)
-    .stack_assemble(ws_by[keep], plan_by[keep], dst1, cl_arg = cl_base,
-                    t_srs_warp = cl$t_srs_warp, nodata = cl$nodata,
-                    band_names = NULL, skip_nosource = skip_nosource,
-                    envir = environment(), r_each = unname(r_by[keep]))
+    list(ws = unname(ws_by[keep]), plans = unname(plan_by[keep]),
+         dst = dst1, r = unname(r_by[keep]), empty = !length(keep))
+  }
+  units <- if (stack) {
+    lapply(seq_along(src), function(g) unit_for(src[[g]], dst_paths[[g]]))
+  } else {
+    unlist(lapply(seq_along(src), function(g)
+      lapply(seq_along(src[[g]]), function(j) unit_for(src[[g]][j], dst_paths[[g]][[j]]))),
+      recursive = FALSE)
   }
 
+  paths <- .batch_dispatch(units, cl_base, cl$t_srs_warp, cl$nodata,
+                           skip_nosource, use_par)
+
   if (stack) {
-    out <- vapply(seq_along(src),
-                  function(g) assemble1(src[[g]], dst_paths[[g]]), character(1))
-    stats::setNames(out, names(dst_paths))
+    stats::setNames(paths, names(src))
   } else {
-    Map(function(urls, ds) {
-      vapply(seq_along(urls), function(j) assemble1(urls[j], ds[[j]]), character(1))
-    }, src, dst_paths)
+    stats::setNames(utils::relist(paths, src), names(src))
   }
+}
+
+# Decide whether to use the ambient mirai daemon pool. NULL = auto (on iff
+# mirai + mori installed and daemons running); TRUE = require; FALSE = serial.
+.batch_use_parallel <- function(parallel) {
+  if (isFALSE(parallel)) return(FALSE)
+  have <- requireNamespace("mirai", quietly = TRUE) &&
+    requireNamespace("mori", quietly = TRUE)
+  daemons_up <- function() {
+    have && isTRUE(tryCatch(mirai::status()$connections > 0, error = function(e) FALSE))
+  }
+  if (isTRUE(parallel)) {
+    if (!have) {
+      cli::cli_abort("{.code parallel = TRUE} needs the {.pkg mirai} and {.pkg mori} packages.")
+    }
+    if (!daemons_up()) {
+      cli::cli_abort(c("{.code parallel = TRUE} needs running daemons.",
+                       "i" = "Start them with {.run mirai::daemons(n)}."))
+    }
+    return(TRUE)
+  }
+  daemons_up()
+}
+
+# Assemble every output unit -> its path, serially or across daemons. The warp
+# stage is the parallelised part; the fetch already ran in one pool upstream.
+.batch_dispatch <- function(units, cl_base, t_srs_warp, nodata, skip_nosource, parallel) {
+  do_one <- function(u) {
+    if (isTRUE(u$empty)) return(NA_character_)
+    .stack_assemble(u$ws, u$plans, u$dst, cl_arg = cl_base, t_srs_warp = t_srs_warp,
+                    nodata = nodata, band_names = NULL, skip_nosource = skip_nosource,
+                    envir = environment(), r_each = u$r)
+  }
+  if (!parallel) {
+    return(vapply(units, do_one, character(1)))
+  }
+  # Ensure the daemons can resolve cptkirk's internals + mori's ALTREP class.
+  mirai::everywhere({
+    if (!"cptkirk" %in% loadedNamespaces()) library(cptkirk)
+    requireNamespace("mori", quietly = TRUE)
+  })
+  res <- mirai::mirai_map(
+    units,
+    function(u, cl_base, t_srs_warp, nodata, skip_nosource) {
+      if (isTRUE(u$empty)) return(NA_character_)
+      cptkirk:::.stack_assemble(u$ws, u$plans, u$dst, cl_arg = cl_base,
+        t_srs_warp = t_srs_warp, nodata = nodata, band_names = NULL,
+        skip_nosource = skip_nosource, envir = environment(), r_each = u$r)
+    },
+    .args = list(cl_base = cl_base, t_srs_warp = t_srs_warp, nodata = nodata,
+                 skip_nosource = skip_nosource)
+  )
+  out <- res[]                      # block for all daemons, results in unit order
+  vapply(out, function(x) if (is.character(x)) x else NA_character_, character(1))
 }
 
 # Resolve `r` to one resampling method per asset (flatten order of `src`).

@@ -91,3 +91,35 @@ test_that("ck_batch rejects a mis-shaped list r", {
     "match the structure"
   )
 })
+
+test_that("ck_batch parallel path (mirai + mori) matches the serial path", {
+  skip_on_cran()
+  skip_if_not_installed("mirai")
+  skip_if_not_installed("mori")
+  dir <- withr::local_tempdir()
+  src <- make_groups(dir)
+  m <- cog_info(src[[1]][1]); gt <- m$geotransform
+  te <- c(gt[1], gt[4] + 32 * gt[6], gt[1] + 32 * gt[2], gt[4])
+
+  ser <- ck_batch(src, dst = file.path(dir, "ser.tif"), stack = FALSE,
+                  te = te, parallel = FALSE)
+
+  mirai::daemons(2)
+  withr::defer(mirai::daemons(0))
+  # In dev (load_all) the daemons need the dev build; installed cptkirk is picked
+  # up by ck_batch's own everywhere() call.
+  if (isTRUE(tryCatch(pkgload::is_dev_package("cptkirk"), error = function(e) FALSE))) {
+    pp <- pkgload::pkg_path()
+    mirai::everywhere(pkgload::load_all(PP, quiet = TRUE, helpers = FALSE),
+                      .args = list(PP = pp))
+  }
+
+  par <- ck_batch(src, dst = file.path(dir, "par.tif"), stack = FALSE,
+                  te = te, parallel = TRUE)
+  expect_equal(lengths(par), lengths(ser))
+  for (g in seq_along(src)) {
+    for (b in seq_along(src[[g]])) {
+      expect_equal(read_band(par[[g]][b]), read_band(ser[[g]][b]))
+    }
+  }
+})
