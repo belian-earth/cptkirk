@@ -110,3 +110,80 @@ test_that("ck_batch sanitise = FALSE (trusted single-grid) matches the default",
   }
 })
 
+test_that("ck_batch returns NA for a source that does not overlap the AOI", {
+  dir <- withr::local_tempdir()
+  near <- const_tif_b(file.path(dir, "near.tif"), 5)
+  far  <- const_tif_b(file.path(dir, "far.tif"), 9,
+                      gt = c(9e6, 10, 0, 9e6, 0, -10))   # disjoint extent
+  m <- cog_info(near); gt <- m$geotransform
+  te <- c(gt[1], gt[4] + 32 * gt[6], gt[1] + 32 * gt[2], gt[4])
+  out <- ck_batch(list(a = near, b = far), dst = file.path(dir, "o.tif"),
+                  stack = FALSE, t_srs = m$crs, te = te, tr = c(10, 10))
+  expect_false(is.na(out$a[1]))
+  expect_true(is.na(out$b[1]))
+})
+
+test_that("ck_batch stack=TRUE keeps band order when a middle band is missing", {
+  dir <- withr::local_tempdir()
+  b1 <- const_tif_b(file.path(dir, "b1.tif"), 11)
+  b2 <- const_tif_b(file.path(dir, "b2.tif"), 22,
+                    gt = c(9e6, 10, 0, 9e6, 0, -10))      # off-AOI -> dropped
+  b3 <- const_tif_b(file.path(dir, "b3.tif"), 33)
+  m <- cog_info(b1); gt <- m$geotransform
+  te <- c(gt[1], gt[4] + 32 * gt[6], gt[1] + 32 * gt[2], gt[4])
+  out <- ck_batch(list(t1 = c(b1, b2, b3)), dst = file.path(dir, "s.tif"),
+                  stack = TRUE, t_srs = m$crs, te = te, tr = c(10, 10))
+  expect_equal(raster_dim(out[["t1"]])[3], 2L)            # middle band dropped
+  expect_true(all(read_band(out[["t1"]], 1) == 11))       # b1 stays first
+  expect_true(all(read_band(out[["t1"]], 2) == 33))       # b3 stays second
+})
+
+test_that("ck_batch sanitise = FALSE aborts on mixed grids", {
+  dir <- withr::local_tempdir()
+  g1 <- const_tif_b(file.path(dir, "g1.tif"), 1)
+  g2 <- const_tif_b(file.path(dir, "g2.tif"), 2,
+                    gt = c(6e5, 10, 0, 4002560, 0, -10))  # shifted origin
+  m <- cog_info(g1); gt <- m$geotransform
+  te <- c(gt[1], gt[4] + 32 * gt[6], gt[1] + 32 * gt[2], gt[4])
+  expect_error(
+    ck_batch(list(a = g1, b = g2), dst = file.path(dir, "o.tif"),
+             t_srs = m$crs, te = te, sanitise = FALSE),
+    "share one grid"
+  )
+})
+
+test_that("ck_batch rejects a dst template that collides on duplicate names", {
+  dir <- withr::local_tempdir()
+  p <- const_tif_b(file.path(dir, "p.tif"), 7)
+  expect_error(
+    ck_batch(list(a = p, a = p), dst = file.path(dir, "out.tif"), stack = TRUE),
+    "duplicate output paths"
+  )
+})
+
+test_that(".plan_sources gives each same-grid source its own nodata", {
+  dir <- withr::local_tempdir()
+  mk <- function(p, nd) {
+    ds <- gdalraster::create("GTiff", p, 48L, 48L, 1L, "Int16",
+      options = c("TILED=YES", "BLOCKXSIZE=16", "BLOCKYSIZE=16"), return_obj = TRUE)
+    on.exit(ds$close())
+    ds$setGeoTransform(c(5e5, 10, 0, 4002560, 0, -10))
+    ds$setProjection(gdalraster::srs_to_wkt("EPSG:32631"))
+    ds$setNoDataValue(1L, nd)
+    ds$write(band = 1L, xoff = 0L, yoff = 0L, xsize = 48L, ysize = 48L,
+             rasterData = rep(7L, 48L * 48L))
+    p
+  }
+  a <- mk(file.path(dir, "a.tif"), 0)
+  b <- mk(file.path(dir, "b.tif"), -9999)               # same grid, diff nodata
+  ma <- cog_meta(cog_open(a, character(0), character(0)))
+  mb <- cog_meta(cog_open(b, character(0), character(0)))
+  gt <- ma$geotransform
+  te <- c(gt[1], gt[4] + 32 * gt[6], gt[1] + 32 * gt[2], gt[4])
+  plans <- .plan_sources(c(a, b), list(ma, mb), t_srs = NULL, te = te,
+    te_srs = NULL, tr = NULL, ts = NULL, bands = NULL, overview = NULL,
+    margin = 8L, max_bytes = .default_max_bytes())
+  expect_equal(plans[[1]]$nodata, 0)                     # not the first's value
+  expect_equal(plans[[2]]$nodata, -9999)
+})
+
