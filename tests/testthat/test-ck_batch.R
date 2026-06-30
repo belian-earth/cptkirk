@@ -191,14 +191,8 @@ test_that("ck_batch auto-uses ambient daemons and matches the serial path", {
   skip_on_cran()
   skip_if_not_installed("mirai")
   skip_if_not_installed("mori")
-  # The daemons are separate processes that load cptkirk via the package's own
-  # everywhere(library(cptkirk)) call -- which needs cptkirk INSTALLED. Under
-  # devtools::load_all there is no installed build to hand them, so skip there
-  # (DEVTOOLS_LOAD is set to the package name during load_all). Runs in R CMD
-  # check / CI, where the package under test is installed.
-  if (identical(Sys.getenv("DEVTOOLS_LOAD"), "cptkirk")) {
-    skip("daemons need an installed cptkirk (skipped under devtools::load_all)")
-  }
+  # Daemons are separate processes that load cptkirk via ck_batch's own
+  # everywhere(library(cptkirk)); like any test, this assumes cptkirk is installed.
   dir <- withr::local_tempdir()
   src <- make_groups(dir)
   m <- cog_info(src[[1]][1]); gt <- m$geotransform
