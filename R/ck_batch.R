@@ -48,6 +48,11 @@
 #'   a path *template*: unique output paths are derived from it using the group
 #'   names (and band names) of `src`, falling back to positional indices when
 #'   names are absent. May be a `/vsi*` path. Defaults to a temp-file template.
+#' @param prefetch Streaming buffer depth: how many completed windows may queue
+#'   ahead of the warp before the fetch pool throttles. `NULL` (default) uses
+#'   `io_concurrency`. A larger value lets the fetch run further ahead to absorb
+#'   consumer (warp) jitter and sustain network saturation, at the cost of more
+#'   buffered windows held in memory (≈ `prefetch` × window size).
 #' @section Parallel warp:
 #' The fetch always uses cptkirk's single connection pool. The per-output warp +
 #' write is dispatched across an **ambient mirai daemon pool** when one is
@@ -77,7 +82,8 @@ ck_batch <- function(src, dst = tempfile(fileext = ".tif"), stack = FALSE,
                             "NUM_THREADS=ALL_CPUS", "BIGTIFF=IF_SAFER"),
                      config = NULL, skip_nosource = TRUE,
                      overview = NULL, margin = 8L,
-                     io_concurrency = 16L, max_bytes = NULL, sanitise = TRUE) {
+                     io_concurrency = 16L, prefetch = NULL,
+                     max_bytes = NULL, sanitise = TRUE) {
   rlang::check_required(src)
   if (!is.list(src) || !length(src) ||
       !all(vapply(src, is.character, logical(1)))) {
@@ -125,7 +131,8 @@ ck_batch <- function(src, dst = tempfile(fileext = ".tif"), stack = FALSE,
     level = g("level"), xoff = g("xoff"), yoff = g("yoff"),
     xsize = g("xsize"), ysize = g("ysize"),
     bands = if (is.null(bands)) integer(0) else as.integer(bands),
-    fill = cp$nodata %||% 0, io_concurrency = args$io
+    fill = cp$nodata %||% 0, io_concurrency = args$io,
+    prefetch = if (is.null(prefetch)) -1L else as.integer(prefetch)
   )
   .batch_stream_run(src, dst_paths, stack, cp$plans, session, r_flat, cl_base,
                     cp$t_srs_warp, cp$nodata, skip_nosource)

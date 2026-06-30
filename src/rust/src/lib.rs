@@ -415,11 +415,19 @@ fn cog_fetch_stream_begin(
     bands: Vec<i32>,
     fill: f64,
     io_concurrency: Nullable<i32>,
+    prefetch: Nullable<i32>,
 ) -> extendr_api::Result<Robj> {
     let rt = runtime::shared_runtime().map_err(to_r)?;
     let io = match io_concurrency {
         Nullable::NotNull(v) if v > 0 => v as usize,
         _ => default_io_concurrency(),
+    };
+    // Channel depth: how many completed windows may queue ahead of the consumer
+    // (warp). Default `io`; larger lets the fetch pool run further ahead to
+    // absorb consumer jitter, at the cost of more buffered windows in memory.
+    let buf = match prefetch {
+        Nullable::NotNull(v) if v > 0 => v as usize,
+        _ => io,
     };
     let bands0: Vec<usize> = bands.iter().map(|&b| (b - 1).max(0) as usize).collect();
     let n = idx.len();
@@ -459,7 +467,7 @@ fn cog_fetch_stream_begin(
         .collect::<std::result::Result<Vec<_>, KirkError>>()
         .map_err(to_r)?;
 
-    let (tx, rx) = tokio::sync::mpsc::channel(io.max(1));
+    let (tx, rx) = tokio::sync::mpsc::channel(buf.max(1));
     let handle = rt.spawn(async move {
         use futures::stream::StreamExt;
         futures::stream::iter(jobs.into_iter().map(|(si, open, req)| {
