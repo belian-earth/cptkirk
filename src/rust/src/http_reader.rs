@@ -57,6 +57,11 @@ impl SignedHttpReader {
         Ok(Self { client, url })
     }
 
+    /// Construct from a shared client so many readers reuse one connection pool.
+    pub(crate) fn with_client(client: reqwest::Client, url: reqwest::Url) -> Self {
+        Self { client, url }
+    }
+
     /// Send a `Range:` GET and return the response (after a 2xx status check).
     async fn range_request(&self, header: String) -> AsyncTiffResult<reqwest::Response> {
         self.client

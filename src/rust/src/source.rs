@@ -37,6 +37,93 @@ pub(crate) fn open_reader(
     Ok(Arc::new(ObjectReader::new(store, path)))
 }
 
+/// HTTP resources reused across a multi-source open so that same-host sources
+/// share one connection pool (one TLS handshake) rather than one per source --
+/// the dominant cost when opening hundreds of small COGs over a latency-bound
+/// store. Build one per batch and thread it through [`open_reader_cached`].
+pub(crate) struct OpenCache {
+    stores: std::collections::HashMap<String, Arc<dyn ObjectStore>>,
+    http_client: Option<reqwest::Client>,
+}
+
+impl OpenCache {
+    pub(crate) fn new() -> Self {
+        Self {
+            stores: std::collections::HashMap::new(),
+            http_client: None,
+        }
+    }
+}
+
+/// Like [`open_reader`], but reuses cached stores / one HTTP client across calls
+/// so same-host sources keep-alive the same connection pool. Build readers for a
+/// whole batch with a single `cache`, then read metadata / fetch from them.
+pub(crate) fn open_reader_cached(
+    src: &str,
+    extra_opts: &[(String, String)],
+    cache: &mut OpenCache,
+) -> Result<Arc<dyn AsyncFileReader>> {
+    if let Ok(url) = url::Url::parse(src) {
+        if is_presigned_http(&url) {
+            let client = match &cache.http_client {
+                Some(c) => c.clone(),
+                None => {
+                    let c = reqwest::Client::builder()
+                        .build()
+                        .map_err(|e| KirkError::Invalid(format!("http client: {e}")))?;
+                    cache.http_client = Some(c.clone());
+                    c
+                }
+            };
+            return Ok(Arc::new(SignedHttpReader::with_client(client, url)));
+        }
+        if url.scheme().len() > 1 {
+            let (store, path) = parse_src_cached(&url, extra_opts, cache)?;
+            return Ok(Arc::new(ObjectReader::new(store, path)));
+        }
+    }
+    let (store, path) = parse_src(src, extra_opts)?;
+    Ok(Arc::new(ObjectReader::new(store, path)))
+}
+
+/// Resolve `url` to an object_store store (cached by store identity) plus the
+/// path within it. The store -- and its connection pool -- is shared across
+/// sources with the same scheme/host/container/credential, so reads keep-alive
+/// one connection instead of handshaking per source. The path is derived without
+/// rebuilding a store (object_store derives it the same way internally).
+fn parse_src_cached(
+    url: &url::Url,
+    extra_opts: &[(String, String)],
+    cache: &mut OpenCache,
+) -> Result<(Arc<dyn ObjectStore>, ObjPath)> {
+    let (_scheme, raw_path) = object_store::ObjectStoreScheme::parse(url)
+        .map_err(|e| KirkError::Invalid(format!("parse_url: {e}")))?;
+    let path = ObjPath::parse(raw_path).map_err(|e| KirkError::Invalid(format!("path: {e}")))?;
+    let key = store_key(url);
+    if let Some(store) = cache.stores.get(&key) {
+        return Ok((store.clone(), path));
+    }
+    let opts = assemble_store_opts(url, extra_opts);
+    let (store, _) = object_store::parse_url_opts(url, opts)
+        .map_err(|e| KirkError::Invalid(format!("parse_url: {e}")))?;
+    let store: Arc<dyn ObjectStore> = Arc::from(store);
+    cache.stores.insert(key, store.clone());
+    Ok((store, path))
+}
+
+/// Identity that determines whether two sources can share an object_store store
+/// (and thus its connection pool): scheme, host, port, first path segment
+/// (container/bucket), and the query -- the SAS/credential that scopes the
+/// store. Sources differing in any of these get their own store.
+fn store_key(url: &url::Url) -> String {
+    let scheme = url.scheme();
+    let host = url.host_str().unwrap_or("");
+    let port = url.port().map(|p| p.to_string()).unwrap_or_default();
+    let container = url.path_segments().and_then(|mut s| s.next()).unwrap_or("");
+    let cred = url.query().unwrap_or("");
+    format!("{scheme}://{host}:{port}/{container}#{cred}")
+}
+
 /// True if `url` is a pre-signed HTTP(S) URL whose credential rides in the query
 /// string, which object_store's generic `HttpStore` would silently drop.
 ///
@@ -71,47 +158,44 @@ fn has_query_key(query: &str, name: &str) -> bool {
     })
 }
 
+/// Assemble the object_store options for `url`: recognised cloud-credential env
+/// vars, the GDAL-translated `extra_opts`, and (for a pre-signed Azure blob URL)
+/// the SAS key re-homed from the query string.
+///
+/// Credentials come from the process environment, using the same variable names
+/// object_store documents (AWS_*, GOOGLE_*, AZURE_*). Only recognised cloud
+/// prefixes are forwarded so an unrelated var can't be mistaken for store
+/// config. With no static credentials the builders fall back to their own chain
+/// (web-identity, ECS, EC2 instance metadata). Secrets never pass through R.
+///
+/// Order matters (`parse_url_opts` applies options last-write-wins): `extra_opts`
+/// (non-secret GDAL knobs) first, then env vars, then the URL SAS last -- so the
+/// asset-specific token embedded in the URL wins over an ambient
+/// `AZURE_STORAGE_SAS_KEY`. A full account key in the environment still takes
+/// precedence regardless (the Azure builder checks access keys before SAS keys).
+fn assemble_store_opts(url: &url::Url, extra_opts: &[(String, String)]) -> Vec<(String, String)> {
+    let env_opts = std::env::vars().filter(|(k, _)| {
+        let k = k.to_ascii_uppercase();
+        k.starts_with("AWS_")
+            || k.starts_with("GOOGLE")
+            || k.starts_with("AZURE_")
+            || k.starts_with("OBJECT_STORE_")
+    });
+    extra_opts
+        .iter()
+        .cloned()
+        .chain(env_opts)
+        .chain(azure_sas_opt(url))
+        .collect()
+}
+
 pub(crate) fn parse_src(
     src: &str,
     extra_opts: &[(String, String)],
 ) -> Result<(Arc<dyn ObjectStore>, ObjPath)> {
     if let Ok(url) = url::Url::parse(src) {
         if url.scheme().len() > 1 {
-            // Credentials come from the process environment, using the same
-            // variable names object_store documents (AWS_*, GOOGLE_*, AZURE_*).
-            // We forward only the recognised cloud prefixes so an unrelated var
-            // (object_store also accepts bare aliases like `region`/`token`)
-            // can't be mistaken for store config. With no static credentials the
-            // builders fall back to their own chain (web-identity, ECS, EC2
-            // instance metadata). Secrets never pass through R.
-            let env_opts = std::env::vars().filter(|(k, _)| {
-                let k = k.to_ascii_uppercase();
-                k.starts_with("AWS_")
-                    || k.starts_with("GOOGLE")
-                    || k.starts_with("AZURE_")
-                    || k.starts_with("OBJECT_STORE_")
-            });
-            // Pre-signed Azure blob URLs (e.g. Microsoft Planetary Computer
-            // assets) carry their only credential in the query string. Re-home
-            // that token into the store config as a SAS key (see azure_sas_opt).
-            let sas_opt = azure_sas_opt(&url);
-            // `extra_opts` are the GDAL-named knobs the R layer translated to
-            // object_store keys (endpoints, no-sign flags, account name -- never
-            // secrets). They go FIRST so a natively-named env var of the same key
-            // wins on conflict: `parse_url_opts` applies options in order, last
-            // write wins (object_store-0.13.2 parse.rs builder_opts!).
-            //
-            // The URL SAS goes LAST so the asset-specific token embedded in the
-            // URL wins over any ambient AZURE_STORAGE_SAS_KEY env var: the
-            // pre-signed token is scoped to this exact blob and is what the
-            // caller fetched for it. A full account key in the environment
-            // (AZURE_STORAGE_ACCOUNT_KEY) still takes precedence regardless of
-            // ordering -- the Azure builder checks access keys before SAS keys.
-            let opts = extra_opts
-                .iter()
-                .cloned()
-                .chain(env_opts)
-                .chain(sas_opt);
+            let opts = assemble_store_opts(&url, extra_opts);
             let (store, path) = object_store::parse_url_opts(&url, opts)
                 .map_err(|e| KirkError::Invalid(format!("parse_url: {e}")))?;
             return Ok((Arc::from(store), path));

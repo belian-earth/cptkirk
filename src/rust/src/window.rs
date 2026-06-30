@@ -29,7 +29,13 @@ pub(crate) struct OpenTiff {
 }
 
 pub(crate) async fn open_tiff(src: &str, opts: &[(String, String)]) -> Result<OpenTiff> {
-    let reader = open_reader(src, opts)?;
+    open_tiff_from_reader(open_reader(src, opts)?).await
+}
+
+/// Read the header + all IFDs over an already-built reader. Splitting this from
+/// reader construction lets a multi-source open build readers once (sharing a
+/// connection pool via `OpenCache`) and then read metadata concurrently.
+pub(crate) async fn open_tiff_from_reader(reader: Arc<dyn AsyncFileReader>) -> Result<OpenTiff> {
     let cache = ReadaheadMetadataCache::new(reader.clone());
     let mut meta = TiffMetadataReader::try_open(&cache).await?;
     let ifds = meta.read_all_ifds(&cache).await?;

@@ -138,14 +138,15 @@ lower if a store rate-limits.}
 large multi-band raster at native resolution; narrow the request, coarsen
 \code{tr}/\code{ts}, or raise this to allow it.}
 
-\item{sanitise}{Logical. \code{TRUE} (default) validates the request and opens
-every source to plan and verify its grid, so mixed grids are handled
-safely. \code{FALSE} is a trusted fast path: it plans the window from a \strong{single}
-source and assumes all sources share that grid, folding the remaining opens
-into the fetch stream (no up-front header read for every source). Use it
-only when the inputs are known to share one grid (e.g. assets of one MGRS
-tile); off-grid sources may fail or, if their extent happens to contain the
-window, return wrong pixels.}
+\item{sanitise}{Logical. Both modes open every source once over one shared
+connection pool per host (so the batch pays ~one TLS handshake, not one per
+source). \code{TRUE} (default) validates the request and plans/verifies every
+source's grid (handles mixed grids). \code{FALSE} is a trusted fast path: it
+plans the window from a \strong{single} source and assumes all sources share that
+grid, skipping per-source planning and the probe. Use it only when the
+inputs are known to share one grid (e.g. assets of one MGRS tile); off-grid
+sources may fail or, if their extent happens to contain the window, return
+wrong pixels.}
 }
 \value{
 The output paths, mirroring the input structure: a list of character

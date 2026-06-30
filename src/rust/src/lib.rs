@@ -338,9 +338,21 @@ fn cog_sources_open(
 ) -> extendr_api::Result<Robj> {
     let rt = runtime::shared_runtime().map_err(to_r)?;
     let opts = zip_opts(opt_keys, opt_vals);
+    // Build all readers first (cheap, single-threaded) so same-host sources share
+    // one connection pool, then read each header concurrently over that pool --
+    // one TLS handshake for the batch instead of one per source.
+    let mut cache = source::OpenCache::new();
+    let readers = srcs
+        .iter()
+        .map(|s| source::open_reader_cached(s, &opts, &mut cache))
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(to_r)?;
     let opens = rt
         .block_on(async {
-            futures::future::try_join_all(srcs.iter().map(|s| window::open_tiff(s, &opts))).await
+            futures::future::try_join_all(
+                readers.into_iter().map(|r| window::open_tiff_from_reader(r)),
+            )
+            .await
         })
         .map_err(to_r)?;
     let opens: Vec<std::sync::Arc<window::OpenTiff>> =
@@ -424,82 +436,6 @@ fn cog_fetch_stream_begin(
     .into())
 }
 
-/// Like `cog_fetch_stream_begin`, but opens each source inside its own fetch
-/// task (from URLs, no pre-opened SourceSet) so the per-source open overlaps the
-/// fetch instead of forming an open-all barrier. The caller must already know
-/// the window for every source (e.g. a trusted single grid planned from one
-/// source). `index` in the stream is 1-based into `srcs`.
-/// @noRd
-#[extendr]
-#[allow(clippy::too_many_arguments)]
-fn cog_stream_fetch_urls_begin(
-    srcs: Vec<String>,
-    opt_keys: Vec<String>,
-    opt_vals: Vec<String>,
-    level: Vec<i32>,
-    xoff: Vec<i32>,
-    yoff: Vec<i32>,
-    xsize: Vec<i32>,
-    ysize: Vec<i32>,
-    bands: Vec<i32>,
-    fill: f64,
-    io_concurrency: Nullable<i32>,
-) -> extendr_api::Result<Robj> {
-    let rt = runtime::shared_runtime().map_err(to_r)?;
-    let opts = zip_opts(opt_keys, opt_vals);
-    let io = match io_concurrency {
-        Nullable::NotNull(v) if v > 0 => v as usize,
-        _ => default_io_concurrency(),
-    };
-    let bands0: Vec<usize> = bands.iter().map(|&b| (b - 1).max(0) as usize).collect();
-    let jobs: Vec<(usize, String, window::WindowReq)> = (0..srcs.len())
-        .map(|k| {
-            (
-                k,
-                srcs[k].clone(),
-                window::WindowReq {
-                    level: (level[k] - 1).max(0) as usize,
-                    xoff: xoff[k].max(0) as usize,
-                    yoff: yoff[k].max(0) as usize,
-                    xsize: xsize[k].max(0) as usize,
-                    ysize: ysize[k].max(0) as usize,
-                },
-            )
-        })
-        .collect();
-
-    let (tx, rx) = std::sync::mpsc::channel();
-    rt.spawn(async move {
-        use futures::stream::StreamExt;
-        futures::stream::iter(jobs.into_iter().map(|(i, src, req)| {
-            let tx = tx.clone();
-            let bands0 = bands0.clone();
-            let opts = opts.clone();
-            async move {
-                let res = async {
-                    let open = window::open_tiff(&src, &opts).await?;
-                    window::fetch_window_native(
-                        &open, req.level, req.xoff, req.yoff, req.xsize, req.ysize, &bands0,
-                        fill, 1,
-                    )
-                    .await
-                }
-                .await
-                .map_err(|e| e.to_string());
-                let _ = tx.send((i, res));
-            }
-        }))
-        .buffer_unordered(io)
-        .collect::<()>()
-        .await;
-    });
-
-    Ok(ExternalPtr::new(FetchSession {
-        rx: std::sync::Mutex::new(rx),
-    })
-    .into())
-}
-
 /// Block for the next completed window (any source, completion order). Returns a
 /// `list(index, bytes, xsize, ysize, n_bands, dtype, bytes_per_sample,
 /// byte_order)` (`index` 1-based into the SourceSet), `list(index, error)` on a
@@ -538,6 +474,5 @@ extendr_module! {
     fn cog_fetch_windows_raw;
     fn cog_sources_open;
     fn cog_fetch_stream_begin;
-    fn cog_stream_fetch_urls_begin;
     fn cog_fetch_take;
 }

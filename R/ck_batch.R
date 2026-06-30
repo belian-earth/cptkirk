@@ -37,14 +37,15 @@
 #'   method for the whole batch, a flat vector of length equal to the total
 #'   number of assets, or a list mirroring `src` for a per-band method (e.g.
 #'   `"near"` for mask bands, `"bilinear"` for reflectance).
-#' @param sanitise Logical. `TRUE` (default) validates the request and opens
-#'   every source to plan and verify its grid, so mixed grids are handled
-#'   safely. `FALSE` is a trusted fast path: it plans the window from a **single**
-#'   source and assumes all sources share that grid, folding the remaining opens
-#'   into the fetch stream (no up-front header read for every source). Use it
-#'   only when the inputs are known to share one grid (e.g. assets of one MGRS
-#'   tile); off-grid sources may fail or, if their extent happens to contain the
-#'   window, return wrong pixels.
+#' @param sanitise Logical. Both modes open every source once over one shared
+#'   connection pool per host (so the batch pays ~one TLS handshake, not one per
+#'   source). `TRUE` (default) validates the request and plans/verifies every
+#'   source's grid (handles mixed grids). `FALSE` is a trusted fast path: it
+#'   plans the window from a **single** source and assumes all sources share that
+#'   grid, skipping per-source planning and the probe. Use it only when the
+#'   inputs are known to share one grid (e.g. assets of one MGRS tile); off-grid
+#'   sources may fail or, if their extent happens to contain the window, return
+#'   wrong pixels.
 #' @param num_threads GDAL warp threads per asset. Defaults to `1` (unlike
 #'   [ck_warp()]): assets are warped one at a time over small windows, where
 #'   per-warp thread spin-up costs more than it saves -- `"ALL_CPUS"` was
@@ -97,58 +98,35 @@ ck_batch <- function(src, dst = fs::file_temp(ext = "tif"), stack = FALSE,
     .envir = environment()
   )
 
+  # Open every source ONCE, sharing one connection pool per host (OpenCache on
+  # the Rust side) so the batch pays ~one TLS handshake, not one per source. Then
+  # stream windows from the open handles as they land -- warp/write overlaps the
+  # remaining fetches and memory is bounded. `sanitise = FALSE` only changes
+  # PLANNING (one grid, trusted) -- see .batch_collect_plan.
   all_urls <- unlist(src, use.names = FALSE)
   use_par <- .batch_use_parallel(parallel)
-  n <- length(all_urls)
-  bands_i <- if (is.null(bands)) integer(0) else as.integer(bands)
-
-  if (isTRUE(sanitise)) {
-    # Safe path: open every source once (concurrently), plan each grid, verify,
-    # then stream windows from the open handles as they land. Each window's
-    # warp/write overlaps the remaining fetches; memory is bounded; headers read
-    # once. Handles mixed grids.
-    cp <- .batch_collect_plan(all_urls, t_srs = t_srs, te = te, te_srs = te_srs,
-                              tr = args$tr, ts = args$ts, bands = bands,
-                              cl_arg = cl_base, overview = overview, margin = margin,
-                              max_bytes = args$max_bytes, sanitise = TRUE)
-    keep <- which(!vapply(cp$plans, is.null, logical(1)))
-    if (!length(keep)) {
-      cli::cli_abort(c(
-        "Requested extent does not overlap any source raster.",
-        "i" = "Check {.arg te} (and {.arg te_srs}/{.arg t_srs}) cover the source footprint(s)."
-      ))
-    }
-    ps <- cp$plans[keep]
-    g <- function(k) vapply(ps, `[[`, integer(1), k)
-    session <- cog_fetch_stream_begin(
-      cp$ptr, idx = as.integer(keep),
-      level = g("level"), xoff = g("xoff"), yoff = g("yoff"),
-      xsize = g("xsize"), ysize = g("ysize"),
-      bands = bands_i, fill = cp$nodata %||% 0, io_concurrency = args$io
-    )
-    plans <- cp$plans; nodata <- cp$nodata; tsw <- cp$t_srs_warp
-  } else {
-    # Trusted fast path (sanitise = FALSE): assume all sources share one grid.
-    # Plan the window from a SINGLE source, then fold every other open into the
-    # fetch stream (opens overlap the fetch) instead of opening all up front --
-    # this skips the per-source header read that dominates prep.
-    tp <- .batch_plan_trusted(all_urls, t_srs = t_srs, te = te, te_srs = te_srs,
-                              tr = args$tr, ts = args$ts, bands = bands,
-                              overview = overview, margin = margin,
-                              max_bytes = args$max_bytes)
-    w <- tp$W
-    session <- cog_stream_fetch_urls_begin(
-      all_urls, tp$keys, tp$vals,
-      level = rep(w$level, n), xoff = rep(w$xoff, n), yoff = rep(w$yoff, n),
-      xsize = rep(w$xsize, n), ysize = rep(w$ysize, n),
-      bands = bands_i, fill = w$nodata %||% 0, io_concurrency = args$io
-    )
-    plans <- lapply(all_urls, function(u) { w$src <- u; w })
-    nodata <- w$nodata; tsw <- t_srs %||% w$crs
+  cp <- .batch_collect_plan(all_urls, t_srs = t_srs, te = te, te_srs = te_srs,
+                            tr = args$tr, ts = args$ts, bands = bands,
+                            cl_arg = cl_base, overview = overview, margin = margin,
+                            max_bytes = args$max_bytes, sanitise = sanitise)
+  keep <- which(!vapply(cp$plans, is.null, logical(1)))
+  if (!length(keep)) {
+    cli::cli_abort(c(
+      "Requested extent does not overlap any source raster.",
+      "i" = "Check {.arg te} (and {.arg te_srs}/{.arg t_srs}) cover the source footprint(s)."
+    ))
   }
-
-  .batch_stream_run(src, dst_paths, stack, plans, session, r_flat, cl_base,
-                    tsw, nodata, skip_nosource, use_par)
+  ps <- cp$plans[keep]
+  g <- function(k) vapply(ps, `[[`, integer(1), k)
+  session <- cog_fetch_stream_begin(
+    cp$ptr, idx = as.integer(keep),
+    level = g("level"), xoff = g("xoff"), yoff = g("yoff"),
+    xsize = g("xsize"), ysize = g("ysize"),
+    bands = if (is.null(bands)) integer(0) else as.integer(bands),
+    fill = cp$nodata %||% 0, io_concurrency = args$io
+  )
+  .batch_stream_run(src, dst_paths, stack, cp$plans, session, r_flat, cl_base,
+                    cp$t_srs_warp, cp$nodata, skip_nosource, use_par)
 }
 
 # Decide whether to use the ambient mirai daemon pool. NULL = auto (on iff
@@ -173,8 +151,13 @@ ck_batch <- function(src, dst = fs::file_temp(ext = "tif"), stack = FALSE,
   daemons_up()
 }
 
-# Open all sources once and plan each window (no fetch). Mirrors .warp_collect's
-# meta + sanitise + plan, but via the open-once handle that the stream reuses.
+# Open all sources once (one shared connection pool per host) and plan each
+# window (no fetch). The handle is reused by the streaming fetch.
+#
+# sanitise = TRUE: validate, plan EVERY source's grid (cached by grid signature
+# so the PROJ transform runs once per unique grid, not per source), handles mixed
+# grids. sanitise = FALSE: plan the window from the FIRST source only and assume
+# every source shares that grid -- skips per-source planning and the probe.
 .batch_collect_plan <- function(src, t_srs, te, te_srs, tr, ts, bands, cl_arg,
                                 overview, margin, max_bytes, sanitise) {
   if (isTRUE(sanitise)) {
@@ -183,61 +166,55 @@ ck_batch <- function(src, dst = fs::file_temp(ext = "tif"), stack = FALSE,
   kv <- .auth_kv()
   opened <- cog_sources_open(src, kv$keys, kv$vals)
   metas <- opened$metas
-  if (isTRUE(sanitise)) {
-    .probe_warp(metas[[1]], t_srs = t_srs, cl_arg = cl_arg,
-                dst = "/vsimem/ckbatch_probe.tif")
+
+  plan1 <- function(i) {
+    .plan_from_meta(src[i], metas[[i]], t_srs = t_srs, te = te, te_srs = te_srs,
+                    tr = tr, ts = ts, bands = bands, overview = overview,
+                    margin = margin, max_bytes = max_bytes)
   }
-  # Sources on the same grid (e.g. every acquisition of one MGRS tile) yield an
-  # identical window plan, but `.plan_from_meta` runs a PROJ `transform_bounds`
-  # per source -- the dominant prep cost. Compute the plan once per unique grid
-  # signature and reuse it, attaching each source's own URL (used for band
-  # names).
+
+  if (!isTRUE(sanitise)) {
+    # Trusted: one grid for the whole batch. Plan from the first source, reuse
+    # the window for all (off-grid sources fail their fetch -> NA, rather than
+    # silently wrong, unless an identical-size off-grid tile -- caller's call).
+    w <- plan1(1L)
+    if (is.null(w)) {
+      cli::cli_abort(c(
+        "The first source does not overlap {.arg te}.",
+        "i" = "{.code sanitise = FALSE} assumes all sources share one grid; check the AOI, or use the default."
+      ))
+    }
+    plans <- lapply(src, function(u) { w$src <- u; w })
+    return(list(ptr = opened$ptr, plans = plans, nodata = w$nodata,
+                t_srs_warp = t_srs %||% w$crs))
+  }
+
+  .probe_warp(metas[[1]], t_srs = t_srs, cl_arg = cl_arg,
+              dst = "/vsimem/ckbatch_probe.tif")
+  # Sources on the same grid yield an identical plan, but `.plan_from_meta` runs
+  # a PROJ `transform_bounds` per source. Compute it once per unique grid
+  # signature and reuse it, attaching each source's own URL (used for band names).
   sig_of <- function(m) {
     paste0(paste(m$geotransform, collapse = ","), "|", m$crs %||% "", "|",
            paste(m$level_width, collapse = ","), "|", paste(m$level_height, collapse = ","))
   }
   cache <- new.env(parent = emptyenv())
   plans <- lapply(seq_along(src), function(i) {
-    m <- metas[[i]]
-    s <- sig_of(m)
+    s <- sig_of(metas[[i]])
     cached <- get0(s, envir = cache, inherits = FALSE)
     if (is.null(cached)) {
-      cached <- list(val = .plan_from_meta(src[i], m, t_srs = t_srs, te = te,
-        te_srs = te_srs, tr = tr, ts = ts, bands = bands, overview = overview,
-        margin = margin, max_bytes = max_bytes))
+      cached <- list(val = plan1(i))
       assign(s, cached, envir = cache)
     }
     p <- cached$val
     if (is.null(p)) return(NULL)
-    p$src <- src[i]    # grid/window shared; src identifies this asset
+    p$src <- src[i]
     p
   })
   surv <- Filter(Negate(is.null), plans)
   list(ptr = opened$ptr, plans = plans,
        nodata = if (length(surv)) surv[[1]]$nodata else NULL,
        t_srs_warp = t_srs %||% (if (length(surv)) surv[[1]]$crs else NULL))
-}
-
-# Trusted planning (sanitise = FALSE): open ONE source, plan the window, and
-# assume every source shares that grid. Avoids reading all headers up front; the
-# remaining opens happen inside the fetch stream. Sources that do not share the
-# grid will fail their fetch (-> NA), not silently return wrong pixels, as long
-# as the window exceeds their extent; identical-size off-grid tiles are the
-# caller's responsibility under `sanitise = FALSE`.
-.batch_plan_trusted <- function(src, t_srs, te, te_srs, tr, ts, bands,
-                                overview, margin, max_bytes) {
-  kv <- .auth_kv()
-  m1 <- cog_meta(cog_open(src[1], kv$keys, kv$vals))
-  w <- .plan_from_meta(src[1], m1, t_srs = t_srs, te = te, te_srs = te_srs,
-                       tr = tr, ts = ts, bands = bands, overview = overview,
-                       margin = margin, max_bytes = max_bytes)
-  if (is.null(w)) {
-    cli::cli_abort(c(
-      "The first source does not overlap {.arg te}.",
-      "i" = "{.code sanitise = FALSE} assumes all sources share one grid; check the AOI, or use the default."
-    ))
-  }
-  list(W = w, keys = kv$keys, vals = kv$vals)
 }
 
 # Drain the streaming fetch, assembling each output as soon as its window(s)
@@ -248,6 +225,7 @@ ck_batch <- function(src, dst = fs::file_temp(ext = "tif"), stack = FALSE,
                               cl_base, t_srs_warp, nodata, skip_nosource, use_par) {
   ng <- length(src)
   grp_of <- rep(seq_len(ng), lengths(src))                 # group per source
+  band_of <- unlist(lapply(src, seq_along), use.names = FALSE)  # band pos in group
   surv <- !vapply(plans, is.null, logical(1))
   need <- vapply(seq_len(ng), function(gi) sum(surv[grp_of == gi]), integer(1))
   dst_src <- if (!stack) unlist(dst_paths, use.names = FALSE) else NULL
@@ -275,8 +253,7 @@ ck_batch <- function(src, dst = fs::file_temp(ext = "tif"), stack = FALSE,
   }
 
   out <- vector("list", length(grp_of))        # one slot per source (stack=FALSE)
-  acc_ws <- vector("list", ng); acc_pl <- vector("list", ng)
-  acc_r <- vector("list", ng); have <- integer(ng)
+  acc <- vector("list", ng); have <- integer(ng)  # per-group accumulators
 
   repeat {
     rcv <- cog_fetch_take(session)
@@ -292,14 +269,16 @@ ck_batch <- function(src, dst = fs::file_temp(ext = "tif"), stack = FALSE,
     if (!stack) {
       out[[si]] <- dispatch(list(w), list(pl), dst_src[si], r_flat[si])
     } else {
+      # Windows arrive in completion order; keep each with its band position so
+      # the stacked output is in source band order, not arrival order.
       have[gi] <- have[gi] + 1L
-      acc_ws[[gi]] <- c(acc_ws[[gi]], list(w))
-      acc_pl[[gi]] <- c(acc_pl[[gi]], list(pl))
-      acc_r[[gi]] <- c(acc_r[[gi]], r_flat[si])
+      acc[[gi]] <- c(acc[[gi]], list(list(bw = band_of[si], w = w, pl = pl,
+                                          r = r_flat[si])))
       if (have[gi] >= need[gi]) {
-        out[[gi]] <- dispatch(acc_ws[[gi]], acc_pl[[gi]], dst_paths[[gi]], acc_r[[gi]])
-        # Free the buffers WITHOUT shrinking the list (`[[<- NULL` would reindex).
-        acc_ws[gi] <- list(NULL); acc_pl[gi] <- list(NULL)
+        e <- acc[[gi]][order(vapply(acc[[gi]], `[[`, integer(1), "bw"))]
+        out[[gi]] <- dispatch(lapply(e, `[[`, "w"), lapply(e, `[[`, "pl"),
+                              dst_paths[[gi]], vapply(e, `[[`, character(1), "r"))
+        acc[gi] <- list(NULL)                 # free without reindexing the list
       }
     }
   }
