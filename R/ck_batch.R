@@ -29,6 +29,10 @@
 #'   method for the whole batch, a flat vector of length equal to the total
 #'   number of assets, or a list mirroring `src` for a per-band method (e.g.
 #'   `"near"` for mask bands, `"bilinear"` for reflectance).
+#' @param num_threads GDAL warp threads per asset. Defaults to `1` (unlike
+#'   [ck_warp()]): assets are warped one at a time over small windows, where
+#'   per-warp thread spin-up costs more than it saves -- `"ALL_CPUS"` was
+#'   measured ~8x slower for this many-small-files pattern.
 #' @param dst Output location. Either an explicit path structure matching the
 #'   output (a list of character vectors when `stack = FALSE`, a character vector
 #'   of length `length(src)` when `stack = TRUE`), **or** a single string used as
@@ -47,7 +51,7 @@ ck_batch <- function(src, dst = fs::file_temp(ext = "tif"), stack = FALSE,
                            "average", "rms", "mode", "max", "min", "med",
                            "q1", "q3", "sum"),
                      bands = NULL, cl_arg = character(0),
-                     num_threads = "ALL_CPUS", warp_memory = "auto",
+                     num_threads = 1L, warp_memory = "auto",
                      cache_max = "auto",
                      co = c("COMPRESS=DEFLATE", "TILED=YES",
                             "NUM_THREADS=ALL_CPUS", "BIGTIFF=IF_SAFER"),

@@ -18,7 +18,7 @@ ck_batch(
     "max", "min", "med", "q1", "q3", "sum"),
   bands = NULL,
   cl_arg = character(0),
-  num_threads = "ALL_CPUS",
+  num_threads = 1L,
   warp_memory = "auto",
   cache_max = "auto",
   co = c("COMPRESS=DEFLATE", "TILED=YES", "NUM_THREADS=ALL_CPUS", "BIGTIFF=IF_SAFER"),
@@ -79,10 +79,10 @@ during the fetch, so only those bands' bytes are streamed.}
 verbatim to \code{\link[gdalraster:warp]{gdalraster::warp()}} (e.g. \code{c("-et", "0")}). These are merged
 with the flags cptkirk builds from the named arguments above.}
 
-\item{num_threads}{Value for GDAL's warp \code{NUM_THREADS} warp option and the
-\code{GDAL_NUM_THREADS} config (default \code{"ALL_CPUS"}), parallelising the
-resampling computation and GeoTIFF (de)compression. \code{NULL} sets neither,
-deferring to the ambient \code{GDAL_NUM_THREADS} (env / session).}
+\item{num_threads}{GDAL warp threads per asset. Defaults to \code{1} (unlike
+\code{\link[=ck_warp]{ck_warp()}}): assets are warped one at a time over small windows, where
+per-warp thread spin-up costs more than it saves -- \code{"ALL_CPUS"} was
+measured ~8x slower for this many-small-files pattern.}
 
 \item{warp_memory}{Warp working memory in MB (GDAL \code{-wm}). \code{"auto"}
 (default) uses ~25\% of system RAM, clamped to 256-2048 MB (bigger means
