@@ -17,7 +17,6 @@ ck_batch(
   r = c("near", "bilinear", "cubic", "cubicspline", "lanczos", "average", "rms", "mode",
     "max", "min", "med", "q1", "q3", "sum"),
   bands = NULL,
-  parallel = NULL,
   cl_arg = character(0),
   num_threads = 1L,
   warp_memory = "auto",
@@ -75,15 +74,6 @@ number of assets, or a list mirroring \code{src} for a per-band method (e.g.
 
 \item{bands}{1-based source bands to read (default: all). Subsetting happens
 during the fetch, so only those bands' bytes are streamed.}
-
-\item{parallel}{Whether to warp + write the outputs across \strong{ambient mirai
-daemons} (the fetch always uses cptkirk's single pool). \code{NULL} (default)
-auto-enables it when the \pkg{mirai} and \pkg{mori} packages are installed
-\emph{and} daemons are running (\code{mirai::daemons(n)}); \code{TRUE} requires them and
-errors otherwise; \code{FALSE} forces the serial path. Fetched window buffers are
-shared to the daemons zero-copy via \pkg{mori} (no per-worker serialisation),
-and each daemon warps single-threaded. Set daemons up yourself; cptkirk uses
-whatever pool is already running and does not spawn or tear down daemons.}
 
 \item{cl_arg}{Character vector of extra raw \code{gdalwarp} flags, forwarded
 verbatim to \code{\link[gdalraster:warp]{gdalraster::warp()}} (e.g. \code{c("-et", "0")}). These are merged
