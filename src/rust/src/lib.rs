@@ -158,19 +158,34 @@ fn cog_fetch_window_raw(
 /// source, in order. Used to plan a multi-tile mosaic without paying the opens
 /// sequentially.
 /// @noRd
+/// Open every source once, reusing one connection pool per host (`OpenCache`),
+/// then read each header concurrently over that pool. The shared front of every
+/// multi-source entry point (meta / fetch / sources-open) -- so the whole API
+/// pays ~one TLS handshake per host instead of one per source.
+fn open_all_cached(
+    srcs: &[String],
+    opts: &[(String, String)],
+) -> std::result::Result<Vec<window::OpenTiff>, KirkError> {
+    let rt = runtime::shared_runtime()?;
+    let mut cache = source::OpenCache::new();
+    let readers = srcs
+        .iter()
+        .map(|s| source::open_reader_cached(s, opts, &mut cache))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    rt.block_on(async {
+        futures::future::try_join_all(readers.into_iter().map(|r| window::open_tiff_from_reader(r)))
+            .await
+    })
+}
+
 #[extendr]
 fn cog_meta_many(
     srcs: Vec<String>,
     opt_keys: Vec<String>,
     opt_vals: Vec<String>,
 ) -> extendr_api::Result<Robj> {
-    let rt = runtime::shared_runtime().map_err(to_r)?;
     let opts = zip_opts(opt_keys, opt_vals);
-    let opens = rt
-        .block_on(async {
-            futures::future::try_join_all(srcs.iter().map(|s| window::open_tiff(s, &opts))).await
-        })
-        .map_err(to_r)?;
+    let opens = open_all_cached(&srcs, &opts).map_err(to_r)?;
     let metas: Vec<Robj> = opens
         .iter()
         .map(build_meta)
@@ -220,15 +235,11 @@ fn cog_fetch_windows_raw(
         })
         .collect();
 
-    // Open every source concurrently, then fetch all windows through one
-    // global concurrency pool (sustained saturation, no per-tile tail).
+    // Open every source once over a shared connection pool, then fetch all
+    // windows through one global concurrency pool (sustained saturation).
+    let opens = open_all_cached(&srcs, &opts).map_err(to_r)?;
     let windows = rt
-        .block_on(async {
-            let opens =
-                futures::future::try_join_all(srcs.iter().map(|s| window::open_tiff(s, &opts)))
-                    .await?;
-            window::fetch_windows_pooled(&opens, &reqs, &bands0, fill, io).await
-        })
+        .block_on(window::fetch_windows_pooled(&opens, &reqs, &bands0, fill, io))
         .map_err(to_r)?;
 
     let out: Vec<Robj> = windows
@@ -336,27 +347,12 @@ fn cog_sources_open(
     opt_keys: Vec<String>,
     opt_vals: Vec<String>,
 ) -> extendr_api::Result<Robj> {
-    let rt = runtime::shared_runtime().map_err(to_r)?;
     let opts = zip_opts(opt_keys, opt_vals);
-    // Build all readers first (cheap, single-threaded) so same-host sources share
-    // one connection pool, then read each header concurrently over that pool --
-    // one TLS handshake for the batch instead of one per source.
-    let mut cache = source::OpenCache::new();
-    let readers = srcs
-        .iter()
-        .map(|s| source::open_reader_cached(s, &opts, &mut cache))
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(to_r)?;
-    let opens = rt
-        .block_on(async {
-            futures::future::try_join_all(
-                readers.into_iter().map(|r| window::open_tiff_from_reader(r)),
-            )
-            .await
-        })
-        .map_err(to_r)?;
-    let opens: Vec<std::sync::Arc<window::OpenTiff>> =
-        opens.into_iter().map(std::sync::Arc::new).collect();
+    let opens: Vec<std::sync::Arc<window::OpenTiff>> = open_all_cached(&srcs, &opts)
+        .map_err(to_r)?
+        .into_iter()
+        .map(std::sync::Arc::new)
+        .collect();
     let metas: Vec<Robj> = opens
         .iter()
         .map(|o| build_meta(o))

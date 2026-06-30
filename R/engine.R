@@ -131,6 +131,34 @@
   out
 }
 
+# Plan each source's window from its metadata, caching by grid signature
+# (geotransform + crs + level dims): sources on the same grid (e.g. every
+# acquisition of one MGRS tile, or the bands of one item) share a plan, so the
+# PROJ `transform_bounds` in `.plan_from_meta` runs once per unique grid, not
+# once per source. Each plan carries its own `src` URL. Non-overlapping -> NULL.
+.plan_sources <- function(urls, metas, t_srs, te, te_srs, tr, ts, bands,
+                          overview, margin, max_bytes) {
+  sig_of <- function(m) {
+    paste0(paste(m$geotransform, collapse = ","), "|", m$crs %||% "", "|",
+           paste(m$level_width, collapse = ","), "|", paste(m$level_height, collapse = ","))
+  }
+  cache <- new.env(parent = emptyenv())
+  lapply(seq_along(urls), function(i) {
+    s <- sig_of(metas[[i]])
+    cached <- get0(s, envir = cache, inherits = FALSE)
+    if (is.null(cached)) {
+      cached <- list(val = .plan_from_meta(urls[i], metas[[i]], t_srs = t_srs,
+        te = te, te_srs = te_srs, tr = tr, ts = ts, bands = bands,
+        overview = overview, margin = margin, max_bytes = max_bytes))
+      assign(s, cached, envir = cache)
+    }
+    p <- cached$val
+    if (is.null(p)) return(NULL)
+    p$src <- urls[i]    # grid/window shared; src identifies this asset
+    p
+  })
+}
+
 # Shared front of the pipeline: sanitise the request, read metadata, plan each
 # source's window, and stream the native bytes. Returns the per-source plans and
 # fetched windows (raw, native dtype) plus the resolved target CRS -- everything
@@ -159,11 +187,9 @@
     .probe_warp(metas[[1]], t_srs = t_srs, cl_arg = cl_arg, dst = dst)
   }
 
-  plans <- Map(function(u, mm) {
-    .plan_from_meta(u, mm, t_srs = t_srs, te = te, te_srs = te_srs, tr = tr,
-                    ts = ts, bands = bands, overview = overview, margin = margin,
-                    max_bytes = max_bytes)
-  }, urls, metas)
+  plans <- .plan_sources(urls, metas, t_srs = t_srs, te = te, te_srs = te_srs,
+                         tr = tr, ts = ts, bands = bands, overview = overview,
+                         margin = margin, max_bytes = max_bytes)
   plans <- Filter(Negate(is.null), plans)
   if (!length(plans)) {
     cli::cli_abort(c(
