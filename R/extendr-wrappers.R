@@ -14,12 +14,9 @@ cog_open <- function(src, opt_keys, opt_vals) .Call(wrap__cog_open, src, opt_key
 #' @noRd
 cog_meta <- function(h) .Call(wrap__cog_meta, h)
 
-#' Concurrently open several sources and return their metadata.
-#'
-#' Opens all `srcs` in a single runtime pass (overlapping the metadata
-#' round-trips) and returns a list with one `read_cog_meta`-style entry per
-#' source, in order. Used to plan a multi-tile mosaic without paying the opens
-#' sequentially.
+#' Concurrently open several sources (one connection pool per host) and return
+#' their metadata, in order. Used to plan a multi-tile mosaic / multi-source
+#' `cog_info` without paying the opens sequentially.
 #' @noRd
 cog_meta_many <- function(srcs, opt_keys, opt_vals) .Call(wrap__cog_meta_many, srcs, opt_keys, opt_vals)
 

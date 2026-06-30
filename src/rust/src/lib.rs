@@ -151,13 +151,6 @@ fn cog_fetch_window_raw(
     .map_err(to_r)
 }
 
-/// Concurrently open several sources and return their metadata.
-///
-/// Opens all `srcs` in a single runtime pass (overlapping the metadata
-/// round-trips) and returns a list with one `read_cog_meta`-style entry per
-/// source, in order. Used to plan a multi-tile mosaic without paying the opens
-/// sequentially.
-/// @noRd
 /// Open every source once, reusing one connection pool per host (`OpenCache`),
 /// then read each header concurrently over that pool. The shared front of every
 /// multi-source entry point (meta / fetch / sources-open) -- so the whole API
@@ -178,6 +171,10 @@ fn open_all_cached(
     })
 }
 
+/// Concurrently open several sources (one connection pool per host) and return
+/// their metadata, in order. Used to plan a multi-tile mosaic / multi-source
+/// `cog_info` without paying the opens sequentially.
+/// @noRd
 #[extendr]
 fn cog_meta_many(
     srcs: Vec<String>,
