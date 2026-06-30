@@ -168,6 +168,18 @@ The return value is a character vector, one path per group.
 A single AOI (\code{te} / \code{t_srs} / \code{tr} / \code{ts}) applies to the whole batch; each
 source clips it to its own grid, so groups on different tiles are fine.
 }
+\section{Parallel warp}{
+
+The fetch always uses cptkirk's single connection pool. The per-output warp +
+write is dispatched across an \strong{ambient mirai daemon pool} when one is
+running (\pkg{mirai} and \pkg{mori} installed and \code{mirai::daemons(n)} active),
+and runs inline otherwise. This helps when the warp/write backs up behind the
+fetch (slow links, large or many-band warps). There is no argument: start
+daemons to enable, \code{mirai::daemons(0)} to disable. Fetched window buffers are
+handed to daemons zero-copy via \pkg{mori}, and each daemon warps
+single-threaded. cptkirk never spawns or tears down daemons.
+}
+
 \seealso{
 \code{\link[=ck_stack]{ck_stack()}} for a single group.
 }

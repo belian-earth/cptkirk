@@ -48,6 +48,15 @@
 #'   a path *template*: unique output paths are derived from it using the group
 #'   names (and band names) of `src`, falling back to positional indices when
 #'   names are absent. May be a `/vsi*` path. Defaults to a temp-file template.
+#' @section Parallel warp:
+#' The fetch always uses cptkirk's single connection pool. The per-output warp +
+#' write is dispatched across an **ambient mirai daemon pool** when one is
+#' running (\pkg{mirai} and \pkg{mori} installed and `mirai::daemons(n)` active),
+#' and runs inline otherwise. This helps when the warp/write backs up behind the
+#' fetch (slow links, large or many-band warps). There is no argument: start
+#' daemons to enable, `mirai::daemons(0)` to disable. Fetched window buffers are
+#' handed to daemons zero-copy via \pkg{mori}, and each daemon warps
+#' single-threaded. cptkirk never spawns or tears down daemons.
 #' @return The output paths, mirroring the input structure: a list of character
 #'   vectors when `stack = FALSE`, a named character vector when `stack = TRUE`.
 #'   Outputs are `NA` when the source did not overlap the AOI, or when its fetch
@@ -185,6 +194,16 @@ ck_batch <- function(src, dst = tempfile(fileext = ".tif"), stack = FALSE,
        t_srs_warp = t_srs %||% (if (length(surv)) surv[[1]]$crs else NULL))
 }
 
+# Use the ambient mirai daemon pool iff available: mirai + mori installed AND
+# daemons currently running. There is no on/off argument -- start daemons
+# (`mirai::daemons(n)`) to enable, stop them (`mirai::daemons(0)`) to disable.
+# cptkirk never spawns or tears down daemons; it uses whatever pool is running.
+.batch_use_parallel <- function() {
+  requireNamespace("mirai", quietly = TRUE) &&
+    requireNamespace("mori", quietly = TRUE) &&
+    isTRUE(tryCatch(mirai::status()$connections > 0, error = function(e) FALSE))
+}
+
 # Drain the streaming fetch, assembling (warp + write) each output as soon as its
 # window(s) land, so the warp/write overlaps the fetches still in flight.
 # stack = FALSE: one output per source (assemble on arrival). stack = TRUE:
@@ -198,10 +217,33 @@ ck_batch <- function(src, dst = tempfile(fileext = ".tif"), stack = FALSE,
   need <- vapply(seq_len(ng), function(gi) sum(surv[grp_of == gi]), integer(1))
   dst_src <- if (!stack) unlist(dst_paths, use.names = FALSE) else NULL
 
+  # Warp + write each output as its window(s) land. If an ambient mirai daemon
+  # pool is running this is dispatched across daemons (the warp/write can back up
+  # behind the drain loop on slow links or heavy warps); otherwise it runs inline.
+  # The streamed fetch is always cptkirk's single pool either way.
+  use_par <- .batch_use_parallel()
+  if (use_par) {
+    # Daemons need cptkirk's internals + mori's ALTREP class on deserialise.
+    mirai::everywhere({
+      if (!"cptkirk" %in% loadedNamespaces()) library(cptkirk)
+      requireNamespace("mori", quietly = TRUE)
+    })
+  }
   dispatch <- function(ws_u, pl_u, dst1, r_u) {
-    .stack_assemble(ws_u, pl_u, dst1, cl_arg = cl_base, t_srs_warp = t_srs_warp,
-      nodata = nodata, band_names = NULL, skip_nosource = skip_nosource,
-      envir = environment(), r_each = r_u)
+    if (use_par) {
+      # Buffers are shared to the daemon zero-copy via mori (see mori::share
+      # below); each daemon warps single-threaded.
+      mirai::mirai(
+        cptkirk:::.stack_assemble(ws_u, pl_u, dst1, cl_arg = cl_base,
+          t_srs_warp = t_srs_warp, nodata = nodata, band_names = NULL,
+          skip_nosource = skip_nosource, envir = environment(), r_each = r_u),
+        ws_u = ws_u, pl_u = pl_u, dst1 = dst1, r_u = r_u, cl_base = cl_base,
+        t_srs_warp = t_srs_warp, nodata = nodata, skip_nosource = skip_nosource)
+    } else {
+      .stack_assemble(ws_u, pl_u, dst1, cl_arg = cl_base, t_srs_warp = t_srs_warp,
+        nodata = nodata, band_names = NULL, skip_nosource = skip_nosource,
+        envir = environment(), r_each = r_u)
+    }
   }
 
   out <- vector("list", length(grp_of))        # one slot per source (stack=FALSE)
@@ -224,6 +266,7 @@ ck_batch <- function(src, dst = tempfile(fileext = ".tif"), stack = FALSE,
     w <- list(bytes = rcv$bytes, xsize = rcv$xsize, ysize = rcv$ysize,
               n_bands = rcv$n_bands, dtype = rcv$dtype,
               bytes_per_sample = rcv$bytes_per_sample, byte_order = rcv$byte_order)
+    if (use_par) w$bytes <- mori::share(w$bytes)   # zero-copy hand-off to daemons
     pl <- plans[[si]]
     gi <- grp_of[si]
     if (!stack) {
@@ -253,7 +296,9 @@ ck_batch <- function(src, dst = tempfile(fileext = ".tif"), stack = FALSE,
   }
 
   collect1 <- function(x) {
-    if (is.character(x) && length(x) == 1L) x else NA_character_
+    if (is.null(x)) return(NA_character_)
+    v <- if (inherits(x, "mirai")) mirai::collect_mirai(x) else x
+    if (is.character(v) && length(v) == 1L) v else NA_character_
   }
   if (stack) {
     stats::setNames(vapply(out[seq_len(ng)], collect1, character(1)), names(src))
