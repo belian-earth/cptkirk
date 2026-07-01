@@ -55,7 +55,7 @@ cog_sources_open <- function(srcs, opt_keys, opt_vals) .Call(wrap__cog_sources_o
 #' `idx` is 1-based into the set; the parallel `level/xoff/...` vectors give each
 #' requested window. Returns a session handle; drain it with `cog_fetch_take`.
 #' @noRd
-cog_fetch_stream_begin <- function(set, idx, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency) .Call(wrap__cog_fetch_stream_begin, set, idx, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency)
+cog_fetch_stream_begin <- function(set, idx, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency, prefetch) .Call(wrap__cog_fetch_stream_begin, set, idx, level, xoff, yoff, xsize, ysize, bands, fill, io_concurrency, prefetch)
 
 #' Block for the next completed window (any source, completion order). Returns a
 #' `list(index, bytes, xsize, ysize, n_bands, dtype, bytes_per_sample,
