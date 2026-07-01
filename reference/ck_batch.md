@@ -34,6 +34,7 @@ ck_batch(
   overview = NULL,
   margin = 8L,
   io_concurrency = 16L,
+  prefetch = NULL,
   max_bytes = NULL,
   sanitise = TRUE
 )
@@ -184,6 +185,15 @@ ck_batch(
   stores that throttle around that many simultaneous range requests
   (e.g. S3 / source.coop). Raise (24-32) on a fast, stable link; lower
   if a store rate-limits.
+
+- prefetch:
+
+  Streaming buffer depth: how many completed windows may queue ahead of
+  the warp before the fetch pool throttles. `NULL` (default) uses
+  `io_concurrency`. A larger value lets the fetch run further ahead to
+  absorb consumer (warp) jitter and sustain network saturation, at the
+  cost of more buffered windows held in memory (≈ `prefetch` × window
+  size).
 
 - max_bytes:
 

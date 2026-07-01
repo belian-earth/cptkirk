@@ -82,6 +82,7 @@ which.</p>
 <span>  overview <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  margin <span class="op">=</span> <span class="fl">8L</span>,</span>
 <span>  io_concurrency <span class="op">=</span> <span class="fl">16L</span>,</span>
+<span>  prefetch <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  max_bytes <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  sanitise <span class="op">=</span> <span class="cn">TRUE</span></span>
 <span><span class="op">)</span></span></code></pre></div>
@@ -221,6 +222,14 @@ single global fetch pool shared across all source tiles. Default 16, which
 suits object stores that throttle around that many simultaneous range
 requests (e.g. S3 / source.coop). Raise (24-32) on a fast, stable link;
 lower if a store rate-limits.</p></dd>
+
+
+<dt id="arg-prefetch">prefetch<a class="anchor" aria-label="anchor" href="#arg-prefetch"></a></dt>
+<dd><p>Streaming buffer depth: how many completed windows may queue
+ahead of the warp before the fetch pool throttles. <code>NULL</code> (default) uses
+<code>io_concurrency</code>. A larger value lets the fetch run further ahead to absorb
+consumer (warp) jitter and sustain network saturation, at the cost of more
+buffered windows held in memory (≈ <code>prefetch</code> × window size).</p></dd>
 
 
 <dt id="arg-max-bytes">max_bytes<a class="anchor" aria-label="anchor" href="#arg-max-bytes"></a></dt>
