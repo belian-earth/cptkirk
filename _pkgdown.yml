@@ -28,6 +28,7 @@ reference:
   - ck_warp
   - warp_remote
   - ck_read
+  - ck_warp_to_buffer
 - title: Stacking & batch
   desc: |
     Drive many sources through one saturating pool: stack sources as separate bands of one output, or reproject/resample a whole list of groups (e.g. a STAC item list, one group per acquisition) in a single streaming fetch.
