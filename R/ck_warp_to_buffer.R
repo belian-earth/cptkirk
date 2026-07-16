@@ -136,12 +136,36 @@ ck_warp_to_buffer <- function(src, t_srs = NULL, te, ts, te_srs = NULL,
     ))
   }
 
-  # Allocate the buffer pre-filled with `fill_val` so pixels no source covers
-  # come back as the sentinel (GDAL warp leaves uncovered output pixels
-  # untouched when INIT_DEST is not set). For dtypes readBin/writeBin can't
-  # represent, fall back to a zeroed buffer + GDAL INIT_DEST.
+  vrts <- .warp_stage(cl$ws, cl$plans, environment())
+  .warp_vrts_to_buffer(vrts, nx = nx, ny = ny, nbands = nbands,
+                       out_dtype = out_dtype, fill_val = fill_val, gt = gt,
+                       t_wkt = t_wkt, t_srs_warp = t_srs_eff, warp_cl = warp_cl)
+}
+
+# Warp already-staged /vsimem raw VRTs into a pre-filled raw BSQ buffer via a
+# GDAL MEM `DATAPOINTER` dataset laid over the R vector, returning the buffer
+# descriptor. Shared by ck_warp_to_buffer() and ck_batch_to_buffer()'s per-output
+# assembler. `gt`/`t_wkt` define the exact output grid; `warp_cl` carries the
+# resampling + warp options (NO geometry flags -- the grid is the MEM dataset's).
+# The caller stages `vrts` (and schedules their cleanup) and scopes
+# GDAL_MEM_ENABLE_OPEN (the >=3.10 gate for opening a MEM:::DATAPOINTER dataset).
+.warp_vrts_to_buffer <- function(vrts, nx, ny, nbands, out_dtype, fill_val,
+                                 gt, t_wkt, t_srs_warp, warp_cl) {
+  # Self-scope the >=3.10 MEM:::DATAPOINTER open gate so this works whether it
+  # runs in the caller's session or an ambient mirai daemon (a separate process
+  # the caller's .local_gdal_speed does not reach).
+  old_mem <- gdalraster::get_config_option("GDAL_MEM_ENABLE_OPEN")
+  gdalraster::set_config_option("GDAL_MEM_ENABLE_OPEN", "YES")
+  on.exit(gdalraster::set_config_option("GDAL_MEM_ENABLE_OPEN", old_mem), add = TRUE)
+
+  bytes <- .dtype_bytes(out_dtype)
   npx <- as.numeric(nx) * as.numeric(ny)
   ntot <- npx * nbands
+
+  # Pre-fill with `fill_val` so pixels no source covers come back as the sentinel
+  # (GDAL warp leaves uncovered output pixels untouched when INIT_DEST is not
+  # set). For dtypes readBin/writeBin can't represent, fall back to a zeroed
+  # buffer + GDAL INIT_DEST.
   spec <- .readbin_spec(out_dtype)
   init_dest <- character(0)
   if (!is.null(spec) && fill_val != 0) {
@@ -152,9 +176,7 @@ ck_warp_to_buffer <- function(src, t_srs = NULL, te, ts, te_srs = NULL,
     if (fill_val != 0) init_dest <- c("-wo", paste0("INIT_DEST=", .numarg(fill_val)))
   }
 
-  vrts <- .warp_stage(cl$ws, cl$plans, environment())
-
-  # Destination: a MEM dataset laid over the R buffer, band-sequential (the
+  # Destination: a MEM dataset over the R buffer, band-sequential (the
   # PIXEL/LINE/BAND offsets give BSQ). GEOTRANSFORM is set via the object, not
   # the DSN, because its commas would clash with the DSN option separator.
   ptr <- gdalraster:::.get_data_ptr(buf)
@@ -165,15 +187,18 @@ ck_warp_to_buffer <- function(src, t_srs = NULL, te, ts, te_srs = NULL,
   o <- methods::new(gdalraster::GDALRaster, dsn, FALSE)
   o$setGeoTransform(gt)
   o$setProjection(t_wkt)
-  if (!is.null(fill)) for (b in seq_len(nbands)) try(o$setNoDataValue(b, fill_val), silent = TRUE)
-  on.exit(try(o$close(), silent = TRUE), add = TRUE)
+  for (b in seq_len(nbands)) try(o$setNoDataValue(b, fill_val), silent = TRUE)
 
-  gdalraster::warp(src_files = vrts, dst_filename = o, t_srs = t_srs_eff,
-                   cl_arg = c(warp_cl, init_dest), quiet = TRUE)
+  ok <- tryCatch({
+    gdalraster::warp(src_files = vrts, dst_filename = o, t_srs = t_srs_warp,
+                     cl_arg = c(warp_cl, init_dest), quiet = TRUE)
+    TRUE
+  }, error = function(e) { try(o$close(), silent = TRUE); stop(e) })
   o$close()
 
-  list(data = buf, nx = nx, ny = ny, nbands = nbands, dtype = out_dtype,
-       nodata = fill_val, geotransform = gt, crs = t_wkt)
+  list(data = buf, nx = as.integer(nx), ny = as.integer(ny),
+       nbands = as.integer(nbands), dtype = out_dtype, nodata = fill_val,
+       geotransform = gt, crs = t_wkt)
 }
 
 # Coerce a fill value to the R type that writeBin(spec$size, spec$what) expects.
