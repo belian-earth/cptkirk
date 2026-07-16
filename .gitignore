@@ -26,3 +26,5 @@ docs
 # local benchmark scratch (not shipped)
 /bench_warp_vs_curl.R
 /benchmarks/
+
+/dev
