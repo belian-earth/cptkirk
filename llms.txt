@@ -195,6 +195,8 @@ onto a target grid, following the gdalwarp argument interface.
   gdalraster::warp)
 - [`ck_read()`](https://belian-earth.github.io/cptkirk/reference/ck_read.md)
   : Warp a remote GeoTIFF / COG straight into an R array
+- [`ck_warp_to_buffer()`](https://belian-earth.github.io/cptkirk/reference/ck_warp_to_buffer.md)
+  : Warp a remote GeoTIFF / COG into a raw native-dtype pixel buffer
 
 ## Stacking & batch
 
@@ -211,6 +213,8 @@ streaming fetch.
 - [`ck_batch()`](https://belian-earth.github.io/cptkirk/reference/ck_batch.md)
   : Fetch many grouped sources through one pool, with
   structure-preserving output
+- [`ck_batch_to_buffer()`](https://belian-earth.github.io/cptkirk/reference/ck_batch_to_buffer.md)
+  : Fetch many grouped sources through one pool, into raw pixel buffers
 
 ## Inspection
 
