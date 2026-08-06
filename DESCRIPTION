@@ -21,7 +21,7 @@ Depends:
     R (>= 4.2)
 Imports:
     cli,
-    gdalraster,
+    gdalraster (>= 2.6.1.9001),
     methods,
     rlang (>= 1.1.0),
     stats,
@@ -34,3 +34,5 @@ Suggests:
     rmarkdown,
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
+Remotes:
+    firelab/gdalraster
