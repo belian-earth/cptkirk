@@ -179,7 +179,7 @@ ck_warp_to_buffer <- function(src, t_srs = NULL, te, ts, te_srs = NULL,
   # Destination: a MEM dataset over the R buffer, band-sequential (the
   # PIXEL/LINE/BAND offsets give BSQ). GEOTRANSFORM is set via the object, not
   # the DSN, because its commas would clash with the DSN option separator.
-  ptr <- gdalraster:::.get_data_ptr(buf)
+  ptr <- gdalraster::get_data_ptr(buf)    # exported since 2.6.1.9001
   dsn <- sprintf(
     "MEM:::DATAPOINTER=%s,PIXELS=%d,LINES=%d,BANDS=%d,DATATYPE=%s,PIXELOFFSET=%d,LINEOFFSET=%d,BANDOFFSET=%.0f",
     as.character(ptr), nx, ny, nbands, out_dtype,
