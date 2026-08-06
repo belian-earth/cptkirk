@@ -39,6 +39,12 @@ jobs:
           r-version: ${{ matrix.config.r }}
           http-user-agent: ${{ matrix.config.http-user-agent }}
 
+      # gdalraster is installed from GitHub (no macOS binary), so the
+      # runner needs system GDAL to build it from source
+      - name: Install GDAL (macOS)
+        if: runner.os == 'macOS'
+        run: brew install gdal proj pkgconf
+
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           extra-packages: any::rcmdcheck
